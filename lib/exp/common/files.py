@@ -11,18 +11,6 @@ from exp.common import debug
 
 _open = open
 
-def get_ext(filename):
-  '''ファイルの拡張子を取得'''
-  (root, ext) = os.path.splitext(filename)
-  return ext
-
-def open(filename, mode = 'r'):
-  '''圧縮/非圧縮のファイルを透過的に開く'''
-  if get_ext(filename) == '.gz':
-    return gzip.open(filename, mode)
-  else:
-    return _open(filename, mode)
-
 def get_content_size(path):
   '''圧縮/非圧縮のファイルのサイズを透過的に調べる'''
   try:
@@ -40,4 +28,24 @@ def get_content_size(path):
       return pos
   except Exception as e:
     return -1
+
+def get_ext(filename):
+  '''ファイルの拡張子を取得'''
+  (root, ext) = os.path.splitext(filename)
+  return ext
+
+def open(filename, mode = 'r'):
+  '''圧縮/非圧縮のファイルを透過的に開く'''
+  if get_ext(filename) == '.gz':
+    return gzip.open(filename, mode)
+  else:
+    return _open(filename, mode)
+
+def test(filename):
+  '''ファイルの存在チェック
+
+  存在しない場合はそのままビルトイン open 関数に例外を投げてもらう'''
+  f_in = _open(filename)
+  f_in.close()
+  return True
 

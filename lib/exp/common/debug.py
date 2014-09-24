@@ -20,6 +20,15 @@ def _show_caller():
   else:
     sys.stdout.write("[%s:%s] : " % (filename, line) )
 
+def _str(arg):
+  if sys.version_info.major == 3:
+    return str(arg)
+  else:
+    if type(arg) == str:
+      return arg.decode('utf-8')
+    else:
+      return unicode(arg)
+
 def log(*args, **keys):
   '''与えられた引数の内容を、呼び出し元情報と一緒に表示する'''
   if _debugging:
@@ -28,7 +37,7 @@ def log(*args, **keys):
     if not 'end' in keys:
       keys['end'] = "\n"
     _show_caller()
-    sys.stdout.write( keys['sep'].join( map(str, args) ) )
+    sys.stdout.write( keys['sep'].join( map(_str, args) ) )
     sys.stdout.write( keys['end'] )
     sys.stdout.flush()
 
