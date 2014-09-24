@@ -3,7 +3,12 @@
 
 '''処理途中の内容をコンソールに動的に書き換える'''
 
+import codecs
 import sys
+
+_stdout = sys.stdout
+if sys.version_info.major < 3:
+  _stdout = codecs.getwriter('utf-8')(sys.stdout)
 
 def _clean(n = 1):
   if n > 0:
@@ -32,13 +37,13 @@ def log(*args, **keys):
   global _last_pos
   if not 'sep' in keys:
     keys['sep'] = ' '
-  sys.stdout.write("\r")
+  _stdout.write("\r")
   buf = keys['sep'].join( map(_str, args) )
-  sys.stdout.write( buf )
+  _stdout.write( buf )
   count = _len(buf)
   _clean( (_last_pos - count) * 2 )
   _last_pos = count
-  sys.stdout.flush()
+  _stdout.flush()
 
 class Counter(object):
   '''プログレス表示更新のタイミングを示すカウンター

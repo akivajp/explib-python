@@ -3,6 +3,7 @@
 
 '''デバッグプリント用の補助関数群'''
 
+import codecs
 import inspect
 import sys
 
@@ -29,6 +30,7 @@ def _str(arg):
     else:
       return unicode(arg)
 
+stdout = codecs.getwriter('utf-8')(sys.stdout)
 def log(*args, **keys):
   '''与えられた引数の内容を、呼び出し元情報と一緒に表示する'''
   if _debugging:
@@ -37,9 +39,9 @@ def log(*args, **keys):
     if not 'end' in keys:
       keys['end'] = "\n"
     _show_caller()
-    sys.stdout.write( keys['sep'].join( map(_str, args) ) )
-    sys.stdout.write( keys['end'] )
-    sys.stdout.flush()
+    stdout.write( keys['sep'].join( map(_str, args) ) )
+    stdout.write( keys['end'] )
+    stdout.flush()
 
 def enable():
   global _debugging

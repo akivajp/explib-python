@@ -36,7 +36,7 @@ def extract(db_src, table, savefile):
       c.update()
       progress.log("saved %d records, last rule: '%s'" % (c.count, source))
   f_out.close()
-  progress.log("saved %d records" % (c.count) )
+  progress.log("saved %d records into %s" % (c.count, savefile) )
   print('')
 
 if __name__ == '__main__':

@@ -15,7 +15,8 @@ from exp.common import debug, files, progress
 from exp.ruletable import sqlcmd
 
 # フレーズ対応の出力を打ち切る上限、自然対数値で指定する
-IGNORE = -5.0
+#IGNORE = -5.0
+IGNORE = -7.0 # ほぼ 0.1%
 
 procs = []
 
@@ -245,6 +246,7 @@ def pivot(db_src, table1, table2, db_save, pivot_name, cores=1):
     for p in procs:
       p.terminate()
       p.join()
+    procs = []
     # ピボットキューの残りを全て書き出す
     while not pivot_queue.empty():
       flush_pivot_records(db_save, pivot_name, c, pivot_queue)
@@ -259,7 +261,7 @@ def pivot(db_src, table1, table2, db_save, pivot_name, cores=1):
       if p.is_alive():
         p.terminate()
         p.join()
-    p = []
+    procs = []
     raise e
   db_save.commit()
   return db_save

@@ -20,6 +20,8 @@ def pivot(**keys):
                                keys['pivot_name'], keys['cores'])
   # SQlite3 DBからピボットされたルールテーブルを抽出
   extract.extract(db_pivot, keys['pivot_name'], keys['table_save'])
+  db_pivot.close()
+  db_rule.close()
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description = 'pivot 2 travatar rule table files into 1 rule table file')
