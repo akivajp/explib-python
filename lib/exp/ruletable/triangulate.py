@@ -5,6 +5,7 @@
 確率スコアの周辺化を行うことで、新しく1つのルールテーブルを合成する．'''
 
 import argparse
+import codecs
 import math
 import multiprocessing
 import sqlite3
@@ -18,7 +19,46 @@ from exp.ruletable import sqlcmd
 #IGNORE = -5.0
 IGNORE = -7.0 # ほぼ 0.1%
 
-procs = []
+
+class WorkSet:
+  '''マルチプロセス処理に必要な情報をまとめたもの'''
+  def __init__(self, savefile):
+    f_out = files.open(savefile, 'wb')
+    self.fileobj = codecs.getwriter('utf-8')(f_out)
+    self.pivot_count = progress.Counter(scaleup = 1000)
+    self.record_queue = multiprocessing.Queue()
+    self.pivot_queue  = multiprocessing.Queue()
+    self.marginalizer = multiprocessing.Process( target = marginalize, args=(self,) )
+    self.recorder = multiprocessing.Process( target = write_records, args = (self,) )
+
+  def __del__(self):
+    self.close()
+
+  def close(self):
+    if self.marginalizer.pid:
+      if self.marginalizer.exitcode == None:
+        self.marginalizer.terminate()
+      self.marginalizer.join()
+    if self.recorder.pid:
+      if self.recorder.exitcode == None:
+        self.recorder.terminate()
+      self.recorder.join()
+    self.record_queue.close()
+    self.pivot_queue.close()
+    self.fileobj.close()
+
+  def join(self):
+    self.marginalizer.join()
+    self.recorder.join()
+
+  def start(self):
+    self.marginalizer.start()
+    self.recorder.start()
+
+  def terminate(self):
+    self.marginalizer.terminate()
+    self.recorder.terminate()
+
 
 def keyval_array(dic):
   '''辞書を、'key=val' という文字列要素で表した配列に変換する'''
@@ -26,29 +66,6 @@ def keyval_array(dic):
   for key, val in dic.items():
     array.append('%(key)s=%(val)s' % locals())
   return array
-
-def set_default(dic, key, val = 0):
-  '''辞書の値が未設定の場合のみ初期値を代入する'''
-  if not key in dic:
-    dic[key] = val
-
-def insert_records(db, table_name, records):
-  '''ピボットされたレコード配列をまとめてSQLite3テーブルに挿入する'''
-  for (source, target), record in records.items():
-    features = str.join(' ', keyval_array(record[0]))
-    counts = str.join(' ', map(str, record[1]) )
-    align  = str.join(' ', sorted(record[2].keys()) )
-    sql = '''
-      INSERT INTO %(table_name)s VALUES (
-        null,
-        ?,
-        ?,
-        "%(features)s",
-        "%(counts)s",
-        "%(align)s"
-      );
-    ''' % locals()
-    db.execute(sql, (source, target) )
 
 def log_add(features, features1, features2, key):
   '''ログ翻訳確率を、確率に戻して足しあわせて再びログを取る'''
@@ -102,183 +119,140 @@ def merge_alignment(record, align1, align2):
           pair = '%(left)s-%(right)s' % locals()
           align[pair] = True
 
-def empty_all(queues):
-  for q in queues:
-    #debug.log(q, q.empty())
-    if not q.empty():
-      return False
-  return True
-
-def get_empty_queue(queues):
-  for i, p in enumerate(procs):
-    if not p.is_alive():
-      raise Exception('Process %(i)d was terminated' % locals() )
-    q = queues[i]
-    if q.empty():
-      return q
-  else:
-    return None
-
-def marginalize(record_queue, pivot_queue):
+def marginalize(workset):
   '''条件付き確率の周辺化を行うワーカー関数
 
   ピボット対象のレコードの配列を record_queue で受け取り、処理したデータを pivot_queue で渡す'''
+  row_count = 0
   while True:
-    if not record_queue.empty():
-      # 処理すべきレコード配列を発見
-      rows = record_queue.get()
-      #debug.log(len(rows))
+    # 処理すべきレコード配列を取得
+    rows = workset.record_queue.get()
+    if rows == None:
+      # None を受け取ったらプロセス終了
+      break
+    #debug.log(len(rows))
 
-      records = {}
-      source = ''
-      for row in rows:
-        #debug.log(row)
-        source = row[0]
-        pivot_rule = row[1] # 参考までに取得しているが使わない
-        target = row[2]
-        features1 = {}
-        for keyval in row[3].split(' '):
-          (key, val) = keyval.split('=')
-          features1[key] = val
-        features2 = {}
-        for keyval in row[4].split(' '):
-          (key, val) = keyval.split('=')
-          features2[key] = val
-        counts1 = [float(count) for count in row[5].split(' ')]
-        counts2 = [float(count) for count in row[6].split(' ')]
-        align1 = row[7].split()
-        align2 = row[8].split()
-        if not (source, target) in records:
-          # 対象言語の訳出のレコードがまだ無いので作る
-          records[(source, target)] = [ {}, [ 0.0, 0.0, 0.0 ], {} ]
-        record = records[(source, target)]
-        # 訳出のスコアを推定する
-        update_features(record, features1, features2)
-        # 句対応のカウントを更新
-        update_counts(record, counts1, counts2)
-        # アラインメントのマージ
-        merge_alignment(record, align1, align2)
-      # 非常に小さな翻訳確率のフレーズは無視する
-      ignoring = []
-      for (source, target), rec in records.items():
-        if rec[0]['fgep'] < IGNORE and rec[0]['egfp'] < IGNORE:
-          #print("\nignoring '%(source)s' -> '%(target)s' %(rec)s" % locals())
-          ignoring.append( (source, target) )
-      for pair in ignoring:
-        del records[pair]
-      # 周辺化したレコードの配列を親プロセスに返す
-      if records:
-        #debug.log("finished pivoting, source rule: '%(source)s'" % locals())
-        #debug.log(source, len(rows), len(records))
-        pivot_queue.put(records)
+    records = {}
+    source = ''
+    for row in rows:
+      row_count += 1
+      #debug.log(row)
+      source = row[0]
+      pivot_rule = row[1] # 参考までに取得しているが使わない
+      target = row[2]
+      features1 = {}
+      for keyval in row[3].split(' '):
+        (key, val) = keyval.split('=')
+        features1[key] = val
+      features2 = {}
+      for keyval in row[4].split(' '):
+        (key, val) = keyval.split('=')
+        features2[key] = val
+      counts1 = [float(count) for count in row[5].split(' ')]
+      counts2 = [float(count) for count in row[6].split(' ')]
+      align1 = row[7].split()
+      align2 = row[8].split()
+      if not (source, target) in records:
+        # 対象言語の訳出のレコードがまだ無いので作る
+        records[(source, target)] = [ {}, [ 0.0, 0.0, 0.0 ], {} ]
+      record = records[(source, target)]
+      # 訳出のスコアを推定する
+      update_features(record, features1, features2)
+      # 句対応のカウントを更新
+      update_counts(record, counts1, counts2)
+      # アラインメントのマージ
+      merge_alignment(record, align1, align2)
+    # 非常に小さな翻訳確率のフレーズは無視する
+    ignoring = []
+    for (source, target), rec in records.items():
+      if rec[0]['fgep'] < IGNORE and rec[0]['egfp'] < IGNORE:
+        #print("\nignoring '%(source)s' -> '%(target)s' %(rec)s" % locals())
+        ignoring.append( (source, target) )
+    for pair in ignoring:
+      del records[pair]
+    # 周辺化したレコードをキューに追加して、別プロセスに書き込んでもらう
+    if records:
+      workset.pivot_count.add( len(records) )
+      for pair in sorted(records.keys()):
+        rec = records[pair]
+        workset.pivot_queue.put([ pair[0], pair[1], rec[0], rec[1], rec[2] ])
+      if workset.pivot_count.should_print():
+        workset.pivot_count.update()
+        progress.log("processing %d records, pivoted %d records, last rule: %s" %
+                     (row_count, workset.pivot_count.count, source))
+  # while ループを抜けた
+  progress.log("processed %d records, pivoted %d records" % (row_count, workset.pivot_count.count))
+  print('')
+  # write_records も終わらせる
+  workset.pivot_queue.put(None)
 
+def write_records(workset):
+  '''キューに溜まったピボット済みのレコードをファイルに書き出す'''
+  while True:
+    rec = workset.pivot_queue.get()
+    if rec == None:
+      # Mone を受け取ったらループ終了
+      break
+    source = rec[0]
+    target = rec[1]
+    features = str.join(' ', keyval_array(rec[2]))
+    counts = str.join(' ', map(str, rec[3]) )
+    align  = str.join(' ', sorted(rec[4].keys()) )
+    buf  = source + ' ||| '
+    buf += target + ' ||| '
+    buf += features + ' ||| '
+    buf += counts + ' ||| '
+    buf += align
+    buf += "\n"
+    workset.fileobj.write(buf)
 
-def flush_pivot_records(db_save, pivot_name, count, pivot_queue):
-  '''キューに溜まったピボット済みのレコードをSQLで書き出す'''
-  #print("flushing pivot records: %d" % pivot_queue.qsize())
-  pivot_records = pivot_queue.get()
-  for pair in pivot_records.keys():
-    last = pair[0]
-    break
-  insert_records(db_save, pivot_name, pivot_records)
-  count.add( len(pivot_records) )
-
-def pivot(db_src, table1, table2, db_save, pivot_name, cores=1):
-  global procs
-  if type(db_src) != sqlite3.Connection:
-    files.test( db_src )
-    db_src = sqlite3.connect(db_src)
-  if type(db_save) != sqlite3.Connection:
-    db_save = sqlite3.connect(db_save)
-  sqlcmd.drop_table(db_save, pivot_name)
-  sqlcmd.create_table(db_save, pivot_name)
-  sqlcmd.create_indices(db_save, pivot_name)
-
-  record_queues = [multiprocessing.Queue() for i in range(0, cores)]
-  pivot_queue = multiprocessing.Queue()
-  procs = [multiprocessing.Process(target=marginalize, args=(record_queues[i], pivot_queue)) for i in range(0, cores)]
-  for p in procs:
-    p.start()
-
+def pivot(workset, db_src, table1, table2):
   # 周辺化を行う対象フレーズ
   # curr_rule -> pivot_rule -> target の形の訳出を探す
   try:
+    if type(db_src) != sqlite3.Connection:
+      files.test( db_src )
+      db_src = sqlite3.connect(db_src)
+    workset.start()
     cur = sqlcmd.select_pivot(db_src, table1, table2)
     curr_rule = ''
-    c = progress.Counter(scaleup = 1000)
     rows = []
-    row_count = 0
     for row in cur:
       #print(row)
       source = row[0]
       if curr_rule != source:
         # 新しい原言語フレーズが出てきたので、ここまでのデータを開いてるプロセスに処理してもらう
-        while True:
-          q = get_empty_queue(record_queues)
-          if q:
-            #debug.log(q)
-            break
-          if not pivot_queue.empty():
-            flush_pivot_records(db_save, pivot_name, c, pivot_queue)
-        q.put(rows)
+        workset.record_queue.put(rows)
         rows = []
         curr_rule = source
-      row_count += 1
       rows.append(row)
-      if not pivot_queue.empty():
-        # ワーカーがピボットしたレコードがあるので書き出す
-        flush_pivot_records(db_save, pivot_name, c, pivot_queue)
-        if c.should_print():
-          c.update()
-          progress.log("processing %d records, pivoted %d records, last rule: %s" %
-                       (row_count, c.count, source))
     else:
       # 最後のデータ処理
-      while True:
-        q = get_empty_queue(record_queues)
-        if q:
-          break
-      q.put(rows)
-    # すべてのワーカープロセスの終了（全てのキューが空になる）まで待つ
-    while not empty_all(record_queues):
-      pass
-    # ワーカープロセスを停止させる
-    for p in procs:
-      p.terminate()
-      p.join()
-    procs = []
-    # ピボットキューの残りを全て書き出す
-    while not pivot_queue.empty():
-      flush_pivot_records(db_save, pivot_name, c, pivot_queue)
-    progress.log("processed %d records, pivoted %d records" % (row_count, c.count))
-    print('')
-  except Exception as e:
+      workset.record_queue.put(rows)
+      workset.record_queue.put(None)
+    # 書き出しプロセスの正常終了待ち
+    workset.join()
+    # ワークセットを片付ける
+    workset.close()
+  except KeyboardInterrupt:
     # 例外発生、全てのワーカープロセスを停止させる
     print('')
-    debug.log(e)
-    print('terminating all the worker processes')
-    for p in procs:
-      if p.is_alive():
-        p.terminate()
-        p.join()
-    procs = []
-    raise e
-  db_save.commit()
-  return db_save
+    print('Caught KeyboardInterrupt, terminating all the worker processes')
+    workset.close()
 
 if __name__ == '__main__':
-  parser = argparse.ArgumentParser(description = 'load 2 rule tables from sqlite3 and pivot into sqlite3 table')
+  parser = argparse.ArgumentParser(description = 'load 2 rule tables from sqlite3 and pivot into moses phrase table')
   parser.add_argument('db_src', help = 'sqlite3 dbfile including following source tables')
   parser.add_argument('table1', help = 'table name for task 1 of travatar rule-table')
   parser.add_argument('table2', help = 'table name for task 2 of travatar rule-table')
-  parser.add_argument('db_save', help = 'sqlite3 dbfile to result storing (can be the same with src_dbfile)')
-  parser.add_argument('pivot_name', help = 'table name for pivoted rule-table')
-  parser.add_argument('--cores', help = 'number of processes parallel computing', type=int, default=1)
+  parser.add_argument('savefile', help = 'path for saving travatar rule table file')
   parser.add_argument('--ignore', help = 'threshold for ignoring the rule translation probability (real number)', type=float, default=IGNORE)
   args = vars(parser.parse_args())
-  #debug.log(args)
 
   IGNORE = args['ignore']
   del args['ignore']
-  pivot(**args)
+  workset = WorkSet(args['savefile'])
+  del args['savefile']
+#  pivot(**args)
+  pivot(workset = workset, **args)
 
