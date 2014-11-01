@@ -174,40 +174,6 @@ def write_records(workset):
     workset.fileobj.write( buf.decode('utf-8') )
   workset.fileobj.close()
 
-#def pivot(workset, db_src, table1, table2):
-#  # 周辺化を行う対象フレーズ
-#  # curr_rule -> pivot_rule -> target の形の訳出を探す
-#  try:
-#    if type(db_src) != sqlite3.Connection:
-#      files.test( db_src )
-#      db_src = sqlite3.connect(db_src)
-#    workset.start()
-#    cur = sqlcmd.select_pivot(db_src, table1, table2)
-#    curr_rule = ''
-#    rows = []
-#    for row in cur:
-#      #print(row)
-#      source = row[0]
-#      if curr_rule != source:
-#        # 新しい原言語フレーズが出てきたので、ワーカープロセスに処理してもらう
-#        workset.record_queue.put(rows)
-#        rows = []
-#        curr_rule = source
-#      rows.append(row)
-#    else:
-#      # 最後のデータ処理
-#      workset.record_queue.put(rows)
-#      workset.record_queue.put(None)
-#    # 書き出しプロセスの正常終了待ち
-#    workset.join()
-#    # ワークセットを片付ける
-#    workset.close()
-#  except KeyboardInterrupt:
-#    # 例外発生、全てのワーカープロセスを停止させる
-#    print('')
-#    print('Caught KeyboardInterrupt, terminating all the worker processes')
-#    workset.close()
-
 class PivotFinder:
   def __init__(self, table1, table2, src_index, trg_index):
     self.fobj_src = files.open(table1, 'r')
@@ -295,10 +261,6 @@ def pivot(workset, table1, table2, src_index, trg_index):
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description = 'load 2 phrase tables and pivot into one moses phrase table')
-#  parser.add_argument('db_src', help = 'sqlite3 dbfile including following source tables')
-#  parser.add_argument('table1', help = 'table name for task 1 of moses phrase-table')
-#  parser.add_argument('table2', help = 'table name for task 2 of moses phrase-table')
-
   parser.add_argument('table1', help = 'phrase table 1')
   parser.add_argument('table2', help = 'phrase table 2')
   parser.add_argument('savefile', help = 'path for saving moses phrase table file')

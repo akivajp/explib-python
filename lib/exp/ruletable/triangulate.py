@@ -174,12 +174,7 @@ def marginalize(workset):
       for pair in sorted(records.keys()):
         rec = records[pair]
         workset.pivot_queue.put([ pair[0], pair[1], rec[0], rec[1], rec[2] ])
-#      if workset.pivot_count.should_print():
-#        workset.pivot_count.update()
-#        progress.log("processing %d records, pivoted %d records, last rule: %s" %
-#                     (row_count, workset.pivot_count.count, source))
   # while ループを抜けた
-#  progress.log("processed %d records, pivoted %d records" % (row_count, workset.pivot_count.count))
   # write_records も終わらせる
   workset.pivot_queue.put(None)
 
@@ -206,40 +201,6 @@ def write_records(workset):
     #workset.fileobj.write(buf)
     workset.fileobj.write( buf.decode('utf-8') )
   workset.fileobj.close()
-
-#def pivot(workset, db_src, table1, table2):
-#  # 周辺化を行う対象フレーズ
-#  # curr_rule -> pivot_rule -> target の形の訳出を探す
-#  try:
-#    if type(db_src) != sqlite3.Connection:
-#      files.test( db_src )
-#      db_src = sqlite3.connect(db_src)
-#    workset.start()
-#    cur = sqlcmd.select_pivot(db_src, table1, table2)
-#    curr_rule = ''
-#    rows = []
-#    for row in cur:
-#      #print(row)
-#      source = row[0]
-#      if curr_rule != source:
-#        # 新しい原言語フレーズが出てきたので、ここまでのデータを開いてるプロセスに処理してもらう
-#        workset.record_queue.put(rows)
-#        rows = []
-#        curr_rule = source
-#      rows.append(row)
-#    else:
-#      # 最後のデータ処理
-#      workset.record_queue.put(rows)
-#      workset.record_queue.put(None)
-#    # 書き出しプロセスの正常終了待ち
-#    workset.join()
-#    # ワークセットを片付ける
-#    workset.close()
-#  except KeyboardInterrupt:
-#    # 例外発生、全てのワーカープロセスを停止させる
-#    print('')
-#    print('Caught KeyboardInterrupt, terminating all the worker processes')
-#    workset.close()
 
 class PivotFinder:
   def __init__(self, table1, table2, src_index, trg_index):
@@ -328,13 +289,8 @@ def pivot(workset, table1, table2, src_index, trg_index):
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description = 'load 2 rule tables and pivot into one moses phrase table')
-#  parser.add_argument('db_src', help = 'sqlite3 dbfile including following source tables')
-#  parser.add_argument('table1', help = 'table name for task 1 of travatar rule-table')
-#  parser.add_argument('table2', help = 'table name for task 2 of travatar rule-table')
-
   parser.add_argument('table1', help = 'rule table 1')
   parser.add_argument('table2', help = 'rule table 2')
-  #parser.add_argument('trg_index', help = 'index of rule table 2')
   parser.add_argument('savefile', help = 'path for saving travatar rule table file')
   parser.add_argument('--ignore', help = 'threshold for ignoring the rule translation probability (real number)', type=float, default=IGNORE)
   args = vars(parser.parse_args())
@@ -353,6 +309,5 @@ if __name__ == '__main__':
   del args['ignore']
   workset = WorkSet(args['savefile'])
   del args['savefile']
-#  pivot(**args)
   pivot(workset = workset, **args)
 
