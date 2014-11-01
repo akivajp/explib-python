@@ -231,13 +231,14 @@ def pivot(workset, table1, table2, src_index, trg_index):
       if not row:
         break
       row_count += 1
-      #print(row)
       source = row[0]
+      #print("ROW: %s" % row)
+      #print("LEN ROWS: %d" % len(rows))
       if curr_phrase != source:
         # 新しい原言語フレーズが出てきたので、ここまでのデータを開いてるプロセスに処理してもらう
         workset.record_queue.put(rows)
         rows = []
-        curr_rule = source
+        curr_phrase = source
       rows.append(row)
       if finder.source_count.should_print():
         finder.source_count.update()
