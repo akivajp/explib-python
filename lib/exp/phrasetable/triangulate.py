@@ -198,10 +198,13 @@ class PivotFinder:
 
   def makePivot(self, rec):
     fields = rec.split('|||')
+    #print("REC: %s" % rec)
     pivot_phrase = fields[1].strip()
     trg_records = findutil.indexed_binsearch(self.fobj_trg, self.trg_indices, pivot_phrase)
+    #print("LEN TRG: %s" % len(trg_records))
     for trg_rec in trg_records:
       trg_fields = trg_rec.split('|||')
+      #print("TRG: %s" % trg_rec)
       row = []
       row.append( fields[0].strip() )
       row.append( pivot_phrase )
