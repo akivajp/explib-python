@@ -5,6 +5,7 @@
 
 import codecs
 import sys
+import time
 
 _stdout = sys.stdout
 if sys.version_info.major < 3:
@@ -35,10 +36,12 @@ _last_pos = 0
 def log(*args, **keys):
   '''処理途中の内容をコンソールに動的に書き換える'''
   global _last_pos
+  global _resume
   if not 'sep' in keys:
     keys['sep'] = ' '
   _stdout.write("\r")
-  buf = keys['sep'].join( map(_str, args) )
+  strTime = time.strftime('[%Y/%m/%d %H:%M:%S] ')
+  buf = strTime + keys['sep'].join( map(_str, args) )
   _stdout.write( buf )
   count = _len(buf)
   _clean( (_last_pos - count) * 2 )

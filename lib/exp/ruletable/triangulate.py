@@ -1,19 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''SQLite3データベースから、2つのルールテーブルをジョイントし、
-確率スコアの周辺化を行うことで、新しく1つのルールテーブルを合成する．'''
+'''2つのルールテーブルをピボット側で周辺化し、新しく1つのルールテーブルを合成する．'''
 
 import argparse
 import codecs
 import math
 import multiprocessing
-import sqlite3
 import sys
 
 # my exp libs
 from exp.common import debug, files, progress
-from exp.ruletable import sqlcmd
+from exp.phrasetable import findutil
 
 # フレーズ対応の出力を打ち切る上限、自然対数値で指定する
 #IGNORE = -5.0
@@ -28,7 +26,7 @@ class WorkSet:
     self.pivot_count = progress.Counter(scaleup = 1000)
     self.record_queue = multiprocessing.Queue()
     self.pivot_queue  = multiprocessing.Queue()
-    self.marginalizer = multiprocessing.Process( target = marginalize, args=(self,) )
+    self.marginalizer = multiprocessing.Process( target = marginalize, args = (self,) )
     self.recorder = multiprocessing.Process( target = write_records, args = (self,) )
 
   def __del__(self):
@@ -123,7 +121,7 @@ def marginalize(workset):
   '''条件付き確率の周辺化を行うワーカー関数
 
   ピボット対象のレコードの配列を record_queue で受け取り、処理したデータを pivot_queue で渡す'''
-  row_count = 0
+  #row_count = 0
   while True:
     # 処理すべきレコード配列を取得
     rows = workset.record_queue.get()
@@ -135,7 +133,7 @@ def marginalize(workset):
     records = {}
     source = ''
     for row in rows:
-      row_count += 1
+      #row_count += 1
       #debug.log(row)
       source = row[0]
       pivot_rule = row[1] # 参考までに取得しているが使わない
@@ -176,13 +174,12 @@ def marginalize(workset):
       for pair in sorted(records.keys()):
         rec = records[pair]
         workset.pivot_queue.put([ pair[0], pair[1], rec[0], rec[1], rec[2] ])
-      if workset.pivot_count.should_print():
-        workset.pivot_count.update()
-        progress.log("processing %d records, pivoted %d records, last rule: %s" %
-                     (row_count, workset.pivot_count.count, source))
+#      if workset.pivot_count.should_print():
+#        workset.pivot_count.update()
+#        progress.log("processing %d records, pivoted %d records, last rule: %s" %
+#                     (row_count, workset.pivot_count.count, source))
   # while ループを抜けた
-  progress.log("processed %d records, pivoted %d records" % (row_count, workset.pivot_count.count))
-  print('')
+#  progress.log("processed %d records, pivoted %d records" % (row_count, workset.pivot_count.count))
   # write_records も終わらせる
   workset.pivot_queue.put(None)
 
@@ -204,20 +201,100 @@ def write_records(workset):
     buf += counts + ' ||| '
     buf += align
     buf += "\n"
-    workset.fileobj.write(buf)
 
-def pivot(workset, db_src, table1, table2):
+    #buf = unicode(buf)
+    #workset.fileobj.write(buf)
+    workset.fileobj.write( buf.decode('utf-8') )
+  workset.fileobj.close()
+
+#def pivot(workset, db_src, table1, table2):
+#  # 周辺化を行う対象フレーズ
+#  # curr_rule -> pivot_rule -> target の形の訳出を探す
+#  try:
+#    if type(db_src) != sqlite3.Connection:
+#      files.test( db_src )
+#      db_src = sqlite3.connect(db_src)
+#    workset.start()
+#    cur = sqlcmd.select_pivot(db_src, table1, table2)
+#    curr_rule = ''
+#    rows = []
+#    for row in cur:
+#      #print(row)
+#      source = row[0]
+#      if curr_rule != source:
+#        # 新しい原言語フレーズが出てきたので、ここまでのデータを開いてるプロセスに処理してもらう
+#        workset.record_queue.put(rows)
+#        rows = []
+#        curr_rule = source
+#      rows.append(row)
+#    else:
+#      # 最後のデータ処理
+#      workset.record_queue.put(rows)
+#      workset.record_queue.put(None)
+#    # 書き出しプロセスの正常終了待ち
+#    workset.join()
+#    # ワークセットを片付ける
+#    workset.close()
+#  except KeyboardInterrupt:
+#    # 例外発生、全てのワーカープロセスを停止させる
+#    print('')
+#    print('Caught KeyboardInterrupt, terminating all the worker processes')
+#    workset.close()
+
+class PivotFinder:
+  def __init__(self, table1, table2, src_index, trg_index):
+    self.fobj_src = files.open(table1, 'r')
+    self.fobj_trg = open(table2, 'r')
+    self.src_indices = findutil.load_indices(src_index)
+    self.trg_indices = findutil.load_indices(trg_index)
+    self.source_count = progress.Counter(scaleup = 1000)
+    self.rows = []
+
+  def getRow(self):
+    if self.rows == None:
+      return None
+    while len(self.rows) == 0:
+      line = self.fobj_src.readline()
+      self.source_count.add()
+      if not line:
+        self.rows = None
+        return None
+      rec = line.strip()
+      self.makePivot(rec)
+    return self.rows.pop(0)
+
+  def makePivot(self, rec):
+    fields = rec.split('|||')
+    pivot_phrase = fields[1].strip()
+    trg_records = findutil.indexed_binsearch(self.fobj_trg, self.trg_indices, pivot_phrase)
+    for trg_rec in trg_records:
+      trg_fields = trg_rec.split('|||')
+      row = []
+      row.append( fields[0].strip() )
+      row.append( pivot_phrase )
+      row.append( trg_fields[1].strip() )
+      row.append( fields[2].strip() )
+      row.append( trg_fields[2].strip() )
+      row.append( fields[3].strip() )
+      row.append( trg_fields[3].strip() )
+      row.append( fields[4].strip() )
+      row.append( trg_fields[4].strip() )
+      self.rows.append( row )
+
+def pivot(workset, table1, table2, src_index, trg_index):
   # 周辺化を行う対象フレーズ
   # curr_rule -> pivot_rule -> target の形の訳出を探す
   try:
-    if type(db_src) != sqlite3.Connection:
-      files.test( db_src )
-      db_src = sqlite3.connect(db_src)
     workset.start()
-    cur = sqlcmd.select_pivot(db_src, table1, table2)
+    finder = PivotFinder(table1, table2, src_index, trg_index)
     curr_rule = ''
     rows = []
-    for row in cur:
+    row_count = 0
+    while True:
+      row = finder.getRow()
+      if not row:
+        break
+      row_count += 1
       #print(row)
       source = row[0]
       if curr_rule != source:
@@ -226,12 +303,20 @@ def pivot(workset, db_src, table1, table2):
         rows = []
         curr_rule = source
       rows.append(row)
-    else:
-      # 最後のデータ処理
-      workset.record_queue.put(rows)
-      workset.record_queue.put(None)
+      if finder.source_count.should_print():
+        finder.source_count.update()
+        nSource = finder.source_count.count
+        ratio = 100.0 * finder.source_count.count / len(finder.src_indices)
+        progress.log("source: %d (%3.2f%%), processed: %d last rule: %s" %
+                     (nSource, ratio, row_count, source) )
+    # while ループを抜けた
+    # 最後のデータ処理
+    workset.record_queue.put(rows)
+    workset.record_queue.put(None)
     # 書き出しプロセスの正常終了待ち
     workset.join()
+    progress.log("source: %d (100%%), processed: %d, pivot %d\n" %
+                 (finder.source_count.count, row_count, workset.pivot_count.count) )
     # ワークセットを片付ける
     workset.close()
   except KeyboardInterrupt:
@@ -240,14 +325,29 @@ def pivot(workset, db_src, table1, table2):
     print('Caught KeyboardInterrupt, terminating all the worker processes')
     workset.close()
 
+
 if __name__ == '__main__':
-  parser = argparse.ArgumentParser(description = 'load 2 rule tables from sqlite3 and pivot into moses phrase table')
-  parser.add_argument('db_src', help = 'sqlite3 dbfile including following source tables')
-  parser.add_argument('table1', help = 'table name for task 1 of travatar rule-table')
-  parser.add_argument('table2', help = 'table name for task 2 of travatar rule-table')
+  parser = argparse.ArgumentParser(description = 'load 2 rule tables and pivot into one moses phrase table')
+#  parser.add_argument('db_src', help = 'sqlite3 dbfile including following source tables')
+#  parser.add_argument('table1', help = 'table name for task 1 of travatar rule-table')
+#  parser.add_argument('table2', help = 'table name for task 2 of travatar rule-table')
+
+  parser.add_argument('table1', help = 'rule table 1')
+  parser.add_argument('table2', help = 'rule table 2')
+  #parser.add_argument('trg_index', help = 'index of rule table 2')
   parser.add_argument('savefile', help = 'path for saving travatar rule table file')
   parser.add_argument('--ignore', help = 'threshold for ignoring the rule translation probability (real number)', type=float, default=IGNORE)
   args = vars(parser.parse_args())
+
+  src_index = args['table1'] + '.index'
+  print("making index: %(src_index)s" % locals())
+  findutil.save_indices(args['table1'], src_index)
+  args['src_index'] = src_index
+
+  trg_index = args['table2'] + '.index'
+  print("making index: %(trg_index)s" % locals())
+  findutil.save_indices(args['table2'], trg_index)
+  args['trg_index'] = trg_index
 
   IGNORE = args['ignore']
   del args['ignore']
