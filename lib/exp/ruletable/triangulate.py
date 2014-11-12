@@ -8,15 +8,19 @@ import codecs
 import math
 import multiprocessing
 import sys
+import time
 
 # my exp libs
-from exp.common import debug, files, progress
+from exp.common import cache, debug, files, progress
 from exp.phrasetable import findutil
 
 # フレーズ対応の出力を打ち切る上限、自然対数値で指定する
 #IGNORE = -5.0
 IGNORE = -7.0 # ほぼ 0.1%
 
+# ピボット側のルールで左端か右端に変数があるものを無視するかどうか (Trueで無視する）
+#constraint = True
+constraint = False
 
 class WorkSet:
   '''マルチプロセス処理に必要な情報をまとめたもの'''
@@ -150,10 +154,14 @@ def marginalize(workset):
       counts2 = [float(count) for count in row[6].split(' ')]
       align1 = row[7].split()
       align2 = row[8].split()
-      if not (source, target) in records:
+      pair = source + ' ||| ' + target + ' ||| '
+      #pair = (source, target)
+      #if not (source, target) in records:
+      if not pair in records:
         # 対象言語の訳出のレコードがまだ無いので作る
-        records[(source, target)] = [ {}, [ 0.0, 0.0, 0.0 ], {} ]
-      record = records[(source, target)]
+        #records[(source, target)] = [ {}, [ 0.0, 0.0, 0.0 ], {} ]
+        records[pair] = [ {}, [ 0.0, 0.0, 0.0 ], {} ]
+      record = records[pair]
       # 訳出のスコアを推定する
       update_features(record, features1, features2)
       # 句対応のカウントを更新
@@ -162,10 +170,15 @@ def marginalize(workset):
       merge_alignment(record, align1, align2)
     # 非常に小さな翻訳確率のフレーズは無視する
     ignoring = []
-    for (source, target), rec in records.items():
-      if rec[0]['fgep'] < IGNORE and rec[0]['egfp'] < IGNORE:
-        #print("\nignoring '%(source)s' -> '%(target)s' %(rec)s" % locals())
-        ignoring.append( (source, target) )
+    #for (source, target), rec in records.items():
+    if not constraint:
+      for pair,  rec in records.items():
+        if rec[0]['fgep'] < IGNORE and rec[0]['egfp'] < IGNORE:
+          #print("\nignoring '%(source)s' -> '%(target)s' %(rec)s" % locals())
+          #ignoring.append( (source, target) )
+          ignoring.append(pair)
+        #elif rec[0]['fgel'] < IGNORE * 2 and rec[0]['egfl'] < IGNORE * 2:
+        #  ignoring.append( (source, target) )
     for pair in ignoring:
       del records[pair]
     # 周辺化したレコードをキューに追加して、別プロセスに書き込んでもらう
@@ -173,7 +186,8 @@ def marginalize(workset):
       workset.pivot_count.add( len(records) )
       for pair in sorted(records.keys()):
         rec = records[pair]
-        workset.pivot_queue.put([ pair[0], pair[1], rec[0], rec[1], rec[2] ])
+        #workset.pivot_queue.put([ pair[0], pair[1], rec[0], rec[1], rec[2] ])
+        workset.pivot_queue.put([ pair, rec[0], rec[1], rec[2] ])
   # while ループを抜けた
   # write_records も終わらせる
   workset.pivot_queue.put(None)
@@ -185,13 +199,17 @@ def write_records(workset):
     if rec == None:
       # Mone を受け取ったらループ終了
       break
-    source = rec[0]
-    target = rec[1]
-    features = str.join(' ', keyval_array(rec[2]))
-    counts = str.join(' ', map(str, rec[3]) )
-    align  = str.join(' ', sorted(rec[4].keys()) )
-    buf  = source + ' ||| '
-    buf += target + ' ||| '
+    #source = rec[0]
+    #source = rec[0][0]
+    #target = rec[1]
+    #target = rec[0][1]
+    pair = rec[0]
+    features = str.join(' ', keyval_array(rec[1]))
+    counts = str.join(' ', map(str, rec[2]) )
+    align  = str.join(' ', sorted(rec[3].keys()) )
+    #buf  = source + ' ||| '
+    #buf += target + ' ||| '
+    buf  = pair # source ||| target ||| という形式になっている
     buf += features + ' ||| '
     buf += counts + ' ||| '
     buf += align
@@ -210,6 +228,7 @@ class PivotFinder:
     self.trg_indices = findutil.load_indices(trg_index)
     self.source_count = progress.Counter(scaleup = 1000)
     self.rows = []
+    self.rows_cache = cache.Cache(1000)
 
   def getRow(self):
     if self.rows == None:
@@ -227,7 +246,28 @@ class PivotFinder:
   def makePivot(self, rec):
     fields = rec.split('|||')
     pivot_phrase = fields[1].strip()
-    trg_records = findutil.indexed_binsearch(self.fobj_trg, self.trg_indices, pivot_phrase)
+
+    if constraint:
+      # ピボットルールの項の列を取得
+      words = pivot_phrase.split()
+      words.pop() # X
+      words.pop() # @
+      if words[0][0] != '"':
+        #print("first term is variable")
+        return
+      elif words[len(words) - 1][0] != '"':
+        #print("last term is variable")
+        return
+      else:
+        #print("first term and last term are word")
+        pass
+
+    if pivot_phrase in self.rows_cache:
+      trg_records = self.rows_cache[pivot_phrase]
+      self.rows_cache.use(pivot_phrase)
+    else:
+      trg_records = findutil.indexed_binsearch(self.fobj_trg, self.trg_indices, pivot_phrase)
+      self.rows_cache[pivot_phrase] = trg_records
     for trg_rec in trg_records:
       trg_fields = trg_rec.split('|||')
       row = []
@@ -252,6 +292,8 @@ def pivot(workset, table1, table2, src_index, trg_index):
     rows = []
     row_count = 0
     while True:
+      if workset.record_queue.qsize() > 2000:
+        time.sleep(1)
       row = finder.getRow()
       if not row:
         break
@@ -263,12 +305,13 @@ def pivot(workset, table1, table2, src_index, trg_index):
         workset.record_queue.put(rows)
         rows = []
         curr_rule = source
+        #debug.log(workset.record_queue.qsize())
       rows.append(row)
       if finder.source_count.should_print():
         finder.source_count.update()
         nSource = finder.source_count.count
         ratio = 100.0 * finder.source_count.count / len(finder.src_indices)
-        progress.log("source: %d (%3.2f%%), processed: %d last rule: %s" %
+        progress.log("source: %d (%3.2f%%), processed: %d, last rule: %s" %
                      (nSource, ratio, row_count, source) )
     # while ループを抜けた
     # 最後のデータ処理
@@ -285,7 +328,7 @@ def pivot(workset, table1, table2, src_index, trg_index):
     print('')
     print('Caught KeyboardInterrupt, terminating all the worker processes')
     workset.close()
-
+    sys.exit(1)
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description = 'load 2 rule tables and pivot into one moses phrase table')
@@ -294,6 +337,11 @@ if __name__ == '__main__':
   parser.add_argument('savefile', help = 'path for saving travatar rule table file')
   parser.add_argument('--ignore', help = 'threshold for ignoring the rule translation probability (real number)', type=float, default=IGNORE)
   args = vars(parser.parse_args())
+
+  IGNORE = args['ignore']
+  del args['ignore']
+  workset = WorkSet(args['savefile'])
+  del args['savefile']
 
   src_index = args['table1'] + '.index'
   print("making index: %(src_index)s" % locals())
@@ -305,9 +353,5 @@ if __name__ == '__main__':
   findutil.save_indices(args['table2'], trg_index)
   args['trg_index'] = trg_index
 
-  IGNORE = args['ignore']
-  del args['ignore']
-  workset = WorkSet(args['savefile'])
-  del args['savefile']
   pivot(workset = workset, **args)
 

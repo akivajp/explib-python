@@ -8,9 +8,10 @@ import codecs
 import math
 import multiprocessing
 import sys
+import time
 
 # my exp libs
-from exp.common import debug, files, progress
+from exp.common import cache, debug, files, progress
 from exp.phrasetable import findutil
 
 #IGNORE = 1e-3
@@ -66,6 +67,7 @@ def update_counts(record, counts1, counts2):
   '''ルールの出現頻度を更新'''
   counts = record[2]
   counts[2] += math.sqrt(counts1[2] * counts2[2])
+  #counts[2] += min(counts1[2], counts2[2])
 
 def infer_counts(counts, scores):
   '''スコアと、推定された共起回数からそれぞれの頻度を算出する'''
@@ -119,12 +121,13 @@ def marginalize(workset):
       scores2 = [float(score) for score in row[4].split(' ')]
       align1 = row[5].split(' ')
       align2 = row[6].split(' ')
-      counts1 = [int(count) for count in row[7].split(' ')]
-      counts2 = [int(count) for count in row[8].split(' ')]
-      if not (source, target) in records:
+      counts1 = [float(count) for count in row[7].split(' ')]
+      counts2 = [float(count) for count in row[8].split(' ')]
+      pair = source + ' ||| ' + target + ' ||| '
+      if not pair in records:
         # 対象言語の訳出のレコードがまだ無いので作る
-        records[(source, target)] = [ [0, 0, 0, 0], {}, [0, 0, 0] ]
-      record = records[(source, target)]
+        records[pair] = [ [0, 0, 0, 0], {}, [0, 0, 0] ]
+      record = records[pair]
       # 訳出のスコア(条件付き確率)を掛けあわせて加算する
       add_scores(record, scores1, scores2)
       # フレーズ対応の出現頻度を推定（共起回数のみ推定）
@@ -133,11 +136,16 @@ def marginalize(workset):
       merge_alignment(record, align1, align2)
     # 非常に小さな翻訳確率のフレーズは無視する
     ignoring = []
-    for (source, target), rec in records.items():
+    for pair, rec in records.items():
+      #infer_counts(rec[2], rec[0])
       if rec[0][0] < IGNORE and rec[0][2] < IGNORE:
         #print("\nignoring '%(source)s' -> '%(target)s' %(rec)s" % locals())
-        ignoring.append( (source, target) )
+        ignoring.append(pair)
+      #elif rec[0][1] < IGNORE ** 2 and rec[0][3] < IGNORE ** 2:
+      #  ignoring.append( (source, target) )
       #elif rec[0][0] < IGNORE ** 2 or rec[0][2] < IGNORE ** 2:
+      #  ignoring.append( (source, target) )
+      #elif (rec[2][0] > 10 or rec[2][1] > 10) and rec[2][2] < 2:
       #  ignoring.append( (source, target) )
     for pair in ignoring:
       del records[pair]
@@ -147,7 +155,8 @@ def marginalize(workset):
       for pair in sorted(records.keys()):
         rec = records[pair]
         infer_counts(rec[2], rec[0])
-        workset.pivot_queue.put([ pair[0], pair[1], rec[0], rec[1], rec[2] ])
+        #workset.pivot_queue.put([ pair[0], pair[1], rec[0], rec[1], rec[2] ])
+        workset.pivot_queue.put([ pair, rec[0], rec[1], rec[2] ])
   # while ループを抜けた
   # write_records も終わらせる
   workset.pivot_queue.put(None)
@@ -159,13 +168,15 @@ def write_records(workset):
     if rec == None:
       # Mone を受け取ったらループ終了
       break
-    source = rec[0]
-    target = rec[1]
-    scores = str.join(' ', map(str, rec[2]))
-    align  = str.join(' ', sorted(rec[3].keys()) )
-    counts = str.join(' ', map(str, rec[4]) )
-    buf  = source + ' ||| '
-    buf += target + ' ||| '
+    #source = rec[0]
+    #target = rec[1]
+    pair = rec[0]
+    scores = str.join(' ', map(str, rec[1]))
+    align  = str.join(' ', sorted(rec[2].keys()) )
+    counts = str.join(' ', map(str, rec[3]) )
+    #buf  = source + ' ||| '
+    #buf += target + ' ||| '
+    buf  = pair # source ||| target ||| という形式になっている
     buf += scores + ' ||| '
     buf += align  + ' ||| '
     buf += counts + ' |||'
@@ -182,6 +193,8 @@ class PivotFinder:
     self.trg_indices = findutil.load_indices(trg_index)
     self.source_count = progress.Counter(scaleup = 1000)
     self.rows = []
+    self.rows_cache = cache.Cache(1000)
+    #self.rows_cache = cache.Cache(100)
 
   def getRow(self):
     if self.rows == None:
@@ -200,8 +213,16 @@ class PivotFinder:
     fields = rec.split('|||')
     #print("REC: %s" % rec)
     pivot_phrase = fields[1].strip()
-    trg_records = findutil.indexed_binsearch(self.fobj_trg, self.trg_indices, pivot_phrase)
-    #print("LEN TRG: %s" % len(trg_records))
+    if pivot_phrase in self.rows_cache:
+      #print("CACHE HIT: %s" % pivot_phrase)
+      trg_records = self.rows_cache.use(pivot_phrase)
+      #trg_records = self.rows_cache[pivot_phrase]
+      #self.rows_cache.use(pivot_phrase)
+    else:
+      trg_records = findutil.indexed_binsearch(self.fobj_trg, self.trg_indices, pivot_phrase)
+      #print("LEN TRG: %s" % len(trg_records))
+      #print("CACHING: %s" % pivot_phrase)
+      self.rows_cache[pivot_phrase] = trg_records
     for trg_rec in trg_records:
       trg_fields = trg_rec.split('|||')
       #print("TRG: %s" % trg_rec)
@@ -227,6 +248,8 @@ def pivot(workset, table1, table2, src_index, trg_index):
     rows = []
     row_count = 0
     while True:
+      if workset.record_queue.qsize() > 2000:
+        time.sleep(1)
       row = finder.getRow()
       if not row:
         break
@@ -239,12 +262,14 @@ def pivot(workset, table1, table2, src_index, trg_index):
         workset.record_queue.put(rows)
         rows = []
         curr_phrase = source
+        #debug.log(workset.record_queue.qsize())
+        #debug.log(workset.pivot_queue.qsize())
       rows.append(row)
       if finder.source_count.should_print():
         finder.source_count.update()
         nSource = finder.source_count.count
         ratio = 100.0 * finder.source_count.count / len(finder.src_indices)
-        progress.log("source: %d (%3.2f%%), processed: %d last phrase: %s" %
+        progress.log("source: %d (%3.2f%%), processed: %d, last phrase: %s" %
                      (nSource, ratio, row_count, source) )
     # while ループを抜けた
     # 最後のデータ処理
@@ -261,7 +286,7 @@ def pivot(workset, table1, table2, src_index, trg_index):
     print('')
     print('Caught KeyboardInterrupt, terminating all the worker processes')
     workset.close()
-
+    sys.exit(1)
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description = 'load 2 phrase tables and pivot into one moses phrase table')
@@ -270,6 +295,11 @@ if __name__ == '__main__':
   parser.add_argument('savefile', help = 'path for saving moses phrase table file')
   parser.add_argument('--ignore', help = 'threshold for ignoring the phrase translation probability (real number)', type=float, default=IGNORE)
   args = vars(parser.parse_args())
+
+  IGNORE = args['ignore']
+  del args['ignore']
+  workset = WorkSet(args['savefile'])
+  del args['savefile']
 
   src_index = args['table1'] + '.index'
   print("making index: %(src_index)s" % locals())
@@ -281,9 +311,5 @@ if __name__ == '__main__':
   findutil.save_indices(args['table2'], trg_index)
   args['trg_index'] = trg_index
 
-  IGNORE = args['ignore']
-  del args['ignore']
-  workset = WorkSet(args['savefile'])
-  del args['savefile']
   pivot(workset = workset, **args)
 
