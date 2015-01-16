@@ -16,9 +16,9 @@ from collections import defaultdict
 
 # my exp libs
 from exp.common import cache, debug, files, progress
-from exp.phrasetable import findutil
-from exp.ruletable import utils
+from exp.phrasetable import findutil, lex
 from exp.ruletable.record import TravatarRecord
+from exp.ruletable.reverse import reverseTravatarTable
 
 # デフォルト値の設定
 
@@ -443,14 +443,14 @@ def pivot(table1, table2, savefile="rule-table.gz", workdir=".", **options):
     if workset.method == 'counts':
       # 単語単位の翻訳確率をロードする
       progress.log("loading word trans probabilities\n")
-      wordProbs = utils.loadWordProbs(workset.lexPath, reverse = False)
+      wordProbs = lex.loadWordProbs(workset.lexPath, reverse = False)
       # 順方向の語彙化翻訳確率を求める
       progress.log("calculating lex trans probs into: %s\n" % workset.srcTablePath)
       calcLexProbs(workset.pivotPath, wordProbs, workset.srcTablePath)
       progress.log("calculated lex trans probs\n")
       # ルールテーブルを反転させる
       progress.log("reversing rule table into: %s\n" % workset.revPath)
-      utils.reverseTable(workset.srcTablePath, workset.revPath)
+      reverseTravatarTable(workset.srcTablePath, workset.revPath)
       progress.log("reversed rule table\n")
       # 逆転したルールテーブルで逆方向のフレーズ翻訳確率を求める
       progress.log("calculating reversed phrase trans probs into: %s\n" % workset.revCountPath)
@@ -458,14 +458,14 @@ def pivot(table1, table2, savefile="rule-table.gz", workdir=".", **options):
       progress.log("calculated reversed phrase trans probs\n")
       # 単語単位の翻訳確率を逆向きにロードする
       progress.log("loading reversed word trans probabilities\n")
-      wordProbs = utils.loadWordProbs(workset.lexPath, reverse = True)
+      wordProbs = lex.loadWordProbs(workset.lexPath, reverse = True)
       # 逆方向の語彙化翻訳確率を求める
       progress.log("calculating reversed lex trans probs into: %s\n" % workset.trgTablePath)
       calcLexProbs(workset.revCountPath, wordProbs, workset.trgTablePath)
       progress.log("calculated reversed lex trans probs\n")
       # 再度ルールテーブルを反転して元に戻す
       progress.log("reversing rule table into: %s\n" % workset.savePath)
-      utils.reverseTable(workset.trgTablePath, workset.savePath)
+      reverseTravatarTable(workset.trgTablePath, workset.savePath)
       progress.log("reversed rule table\n")
       #pp.pprint(wordProbs)
       #assert False
@@ -477,7 +477,7 @@ def pivot(table1, table2, savefile="rule-table.gz", workdir=".", **options):
     sys.exit(1)
 
 def main():
-  parser = argparse.ArgumentParser(description = 'load 2 rule tables and pivot into one moses phrase table')
+  parser = argparse.ArgumentParser(description = 'load 2 rule tables and pivot into one travatar rule table')
   parser.add_argument('table1', help = 'rule table 1')
   parser.add_argument('table2', help = 'rule table 2')
   parser.add_argument('savefile', help = 'path for saving travatar rule table file')
