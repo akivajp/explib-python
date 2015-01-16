@@ -3,53 +3,53 @@
 
 import sys
 
-def save_indices(table_file, index_file):
-  fobj_table = open(table_file, 'r')
-  fobj_index = open(index_file, 'w')
+def saveIndices(tablePath, indexPath):
+  tableFile = open(tablePath, 'r')
+  indexFile = open(indexPath, 'w')
   while True:
-    pos = fobj_table.tell()
-    if fobj_table.readline() == '':
+    pos = tableFile.tell()
+    if tableFile.readline() == '':
       break
-    fobj_index.write("%(pos)s\n" % locals())
+    indexFile.write("%s\n" % pos)
 
-def make_indices(table_file):
-  fobj = open(table_file, 'r')
+def makeIndices(tablePath):
+  tableFile = open(tablePath, 'r')
   indices = []
   while True:
     pos = fobj.tell()
-    if fobj_table.readline() == '':
+    if tableFile.readline() == '':
       break
     indices.append( pos )
   return indices
 
-def load_indices(index_file):
-  fobj = open(index_file, 'r')
+def loadIndices(indexPath):
+  indexFile = open(indexPath, 'r')
   indices = []
-  for line in fobj:
+  for line in indexFile:
     indices.append( int(line.strip()) )
   return indices
 
-def get_record(fobj, indices, index):
+def getRecLine(tableFile, indices, index):
   pos = indices[index]
-  fobj.seek(pos)
-  return fobj.readline().strip()
+  tableFile.seek(pos)
+  return tableFile.readline().strip()
 
-def get_key(record):
-  fields = record.split('|||')
+def getKey(recLine):
+  fields = recLine.split('|||')
   return fields[0].strip() + ' |||'
 
 # フレーズの共通するレコードをリストで返す
-def get_common(fobj, indices, index):
-  rec = get_record(fobj, indices, index)
-  src = get_key(rec)
-  records = [ rec ]
+def getCommon(tableFile, indices, index):
+  recLine = getRecLine(tableFile, indices, index)
+  src = getKey(recLine)
+  recLines = [ recLine ]
   i = 1
   while True:
     if index - i < 0:
       break
-    rec = get_record(fobj, indices, index - i)
-    if get_key(rec) == src:
-      records.insert(0, rec)
+    recLine = getRecLine(tableFile, indices, index - i)
+    if getKey(recLine) == src:
+      recLines.insert(0, recLine)
       i += 1
     else:
       break
@@ -57,42 +57,46 @@ def get_common(fobj, indices, index):
   while True:
     if index + i >= len(indices):
       break
-    rec = get_record(fobj, indices, index + i)
-    if get_key(rec) == src:
-      records.append(rec)
+    recLine = getRecLine(tableFile, indices, index + i)
+    if getKey(recLine) == src:
+      recLines.append(recLine)
       i += 1
     else:
       break
-  return records
+  return recLines
 
-def indexed_binsearch(fobj_table, indices, src_phrase):
+def searchIndexed(tableFile, indices, srcPhrase):
   # ||| 付きの文字列を考慮しないとうまく比較できない
-  key = src_phrase + ' |||'
+  key = srcPhrase + ' |||'
   def binsearch(start, end):
     #print(start, end, src_phrase, len(indices) )
     if start > end or start < 0 or end >= len(indices):
       return []
     if start == end:
-      rec = get_record(fobj_table, indices, start)
-      if get_key(rec) == key:
-        return get_common(fobj_table, indices, start)
+      recLine = getRecLine(tableFile, indices, start)
+      if getKey(recLine) == key:
+        return getCommon(tableFile, indices, start)
       else:
         return []
     mid = (start + end) / 2
-    mid_rec = get_record(fobj_table, indices, mid)
-    mid_key = get_key(mid_rec)
+    midRec = getRecLine(tableFile, indices, mid)
+    midKey = getKey(midRec)
     #print("MID = %d: %s" % (mid, mid_key))
-    if mid_key == key:
-      return get_common(fobj_table, indices, mid)
-    elif mid_key < key:
+    if midKey == key:
+      return getCommon(tableFile, indices, mid)
+    elif midKey < key:
       return binsearch(mid + 1, end)
     else:
       return binsearch(start, mid - 1)
   return binsearch(0, len(indices) - 1)
 
-if __name__ == '__main__':
-  fobj = open(sys.argv[2])
-  indices = make_index.load_indices
-  found = indexed_binsearch(sys.argv[1], indices, sys.argv[3])
+
+def main():
+  indexFile = open(sys.argv[2])
+  indices = loadIndices(indexFile)
+  found = searchIndexed(open(sys.argv[1]), indices, sys.argv[3])
   print(found)
+
+if __name__ == '__main__':
+  main()
 

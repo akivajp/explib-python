@@ -14,8 +14,9 @@ import time
 from exp.common import cache, debug, files, progress
 from exp.phrasetable import findutil
 
-#IGNORE = 1e-3
-IGNORE = 1e-2
+#THRESHOLD = 1e-2
+THRESHOLD = 0 # 打ち切り無し
+NBEST = 30
 
 class WorkSet:
   '''マルチプロセス処理に必要な情報をまとめたもの'''
@@ -134,23 +135,39 @@ def marginalize(workset):
       update_counts(record, counts1, counts2)
       # アラインメントのマージ
       merge_alignment(record, align1, align2)
-    # 非常に小さな翻訳確率のフレーズは無視する
-    ignoring = []
-    for pair, rec in records.items():
-      #infer_counts(rec[2], rec[0])
-      if rec[0][0] < IGNORE and rec[0][2] < IGNORE:
-        #print("\nignoring '%(source)s' -> '%(target)s' %(rec)s" % locals())
-        ignoring.append(pair)
-      #elif rec[0][1] < IGNORE ** 2 and rec[0][3] < IGNORE ** 2:
-      #  ignoring.append( (source, target) )
-      #elif rec[0][0] < IGNORE ** 2 or rec[0][2] < IGNORE ** 2:
-      #  ignoring.append( (source, target) )
-      #elif (rec[2][0] > 10 or rec[2][1] > 10) and rec[2][2] < 2:
-      #  ignoring.append( (source, target) )
-    for pair in ignoring:
-      del records[pair]
+    if THRESHOLD > 0:
+      # 非常に小さな翻訳確率のフレーズは無視する
+      ignoring = []
+      for pair, rec in records.items():
+        #infer_counts(rec[2], rec[0])
+        if rec[0][0] < THRESHOLD and rec[0][2] < THRESHOLD:
+          #print("\nignoring '%(source)s' -> '%(target)s' %(rec)s" % locals())
+          ignoring.append(pair)
+        #elif rec[0][1] < IGNORE ** 2 and rec[0][3] < IGNORE ** 2:
+        #  ignoring.append( (source, target) )
+        #elif rec[0][0] < IGNORE ** 2 or rec[0][2] < IGNORE ** 2:
+        #  ignoring.append( (source, target) )
+        #elif (rec[2][0] > 10 or rec[2][1] > 10) and rec[2][2] < 2:
+        #  ignoring.append( (source, target) )
+      for pair in ignoring:
+        del records[pair]
+    if NBEST > 0:
+      for pair in records.keys():
+        rec = records[pair]
+#        rec.append( rec[0][0] * rec[0][1] * rec[0][2] * rec[0][3] )
+        rec.append( rec[0][2] ) # by P(e|f)
+#        rec.append( rec[0][2] * rec[0][3] )
+#        rec.append( rec[0][0] * rec[0][1] )
+        #debug.log( rec[3] )
+      best_records = {}
+      for pair in sorted(records.keys(), reverse=True, key=lambda pair: records[pair][3])[:NBEST]:
+        rec = records[pair]
+        best_records[pair] = records[pair]
+        #debug.log( rec[3] )
+      records = best_records
     # 周辺化したレコードをキューに追加して、別プロセスに書き込んでもらう
     if records:
+      #debug.log( len(records) )
       workset.pivot_count.add( len(records) )
       for pair in sorted(records.keys()):
         rec = records[pair]
@@ -293,11 +310,14 @@ if __name__ == '__main__':
   parser.add_argument('table1', help = 'phrase table 1')
   parser.add_argument('table2', help = 'phrase table 2')
   parser.add_argument('savefile', help = 'path for saving moses phrase table file')
-  parser.add_argument('--ignore', help = 'threshold for ignoring the phrase translation probability (real number)', type=float, default=IGNORE)
+  parser.add_argument('--threshold', help = 'threshold for ignoring the phrase translation probability (real number)', type=float, default=THRESHOLD)
+  parser.add_argument('--nbest', help = 'best n scores for phrase pair filtering (default = 20)', type=int, default=NBEST)
   args = vars(parser.parse_args())
 
-  IGNORE = args['ignore']
-  del args['ignore']
+  THRESHOLD = args['threshold']
+  del args['threshold']
+  NBEST = args['nbest']
+  del args['nbest']
   workset = WorkSet(args['savefile'])
   del args['savefile']
 

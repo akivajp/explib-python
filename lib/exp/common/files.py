@@ -3,8 +3,10 @@
 
 '''ファイル入出力関係の補助関数群'''
 
+import codecs
 import gzip
 import io
+import os
 import os.path
 import re
 
@@ -13,7 +15,19 @@ import exp.common.progress
 
 _open = open
 
-def get_content_size(path):
+def autoCat(filenames, target):
+  '''ファイルの内容をコピーする。圧縮ファイルであれば展開する'''
+  if type(filenames) != list:
+    filenames = [filenames]
+  f_out = open(target, 'w')
+  for filename in filenames:
+    f_in = open(filename, 'r')
+    for line in f_in:
+      f_out.write(line)
+    f_in.close()
+  f_out.close()
+
+def getContentSize(path):
   '''圧縮/非圧縮のファイルのサイズを透過的に調べる'''
   try:
     f_in = _open(path, 'rb')
@@ -31,10 +45,19 @@ def get_content_size(path):
   except Exception as e:
     return -1
 
-def get_ext(filename):
+def getExt(filename):
   '''ファイルの拡張子を取得'''
-  (root, ext) = os.path.splitext(filename)
+  (name, ext) = os.path.splitext(filename)
   return ext
+
+def isGzipped(filename):
+  '''指定されたファイルがGzipで圧縮されているかどうか'''
+  try:
+    f = gzip.open(filename, 'r')
+    f.readline()
+    return True
+  except Exception as e:
+    return False
 
 def load(filename, progress = True, bs = 10 * 1024 * 1024):
   '''ファイルをメモリ上に全て読み出し、圧縮されたファイルは透過的に読み込めるようにする'''
@@ -66,12 +89,26 @@ def load(filename, progress = True, bs = 10 * 1024 * 1024):
   else:
     return data
 
+def mkdir(dirname, **options):
+  '''ディレクトリを再帰的に作成する。ディレクトリが存在してもエラーを出さないが、ファイルなら例外'''
+  if os.path.isdir(dirname):
+    return
+  else:
+    ops = {}
+    if options.has_key('mode'):
+      ops['mode'] = options['mode']
+    os.makedirs(dirname, **ops)
+
 def open(filename, mode = 'r'):
   '''圧縮/非圧縮のファイルを透過的に開く'''
-  if get_ext(filename) == '.gz':
-    return gzip.open(filename, mode)
+  if getExt(filename) == '.gz' or isGzipped(filename):
+    fileObj = gzip.open(filename, mode)
   else:
-    return _open(filename, mode)
+    fileObj = _open(filename, mode)
+  if mode.find('r') >= 0:
+    return codecs.getreader('utf-8')(fileObj)
+  else:
+    return codecs.getwriter('utf-8')(fileObj)
 
 def rawtell(fileobj):
   '''透過的にファイルの現在位置を求める．圧縮されたデータの場合は圧縮データバッファの位置を求める'''
