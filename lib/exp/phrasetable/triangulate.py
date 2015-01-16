@@ -19,7 +19,7 @@ from exp.common import cache, debug, files, progress
 from exp.phrasetable import findutil
 from exp.phrasetable import lex
 from exp.phrasetable.record import MosesRecord
-from exp.phrasetable.reverse import reverseMosesTable
+from exp.phrasetable.reverse import reverseTable
 
 # フレーズ対応の出力を打ち切る上限、自然対数値で指定する
 #THRESHOLD = 1e-3
@@ -35,7 +35,7 @@ pp = pprint.PrettyPrinter()
 
 class WorkSet:
   '''マルチプロセス処理に必要な情報をまとめたもの'''
-  def __init__(self, savefile, workdir, method):
+  def __init__(self, savefile, workdir, method, RecordClass = MosesRecord, prefix = "phrase"):
     self.method = method
     self.nbest = NBEST
     self.outQueue = multiprocessing.Queue()
@@ -44,13 +44,14 @@ class WorkSet:
     self.savePath = savefile
     self.threshold = THRESHOLD
     self.workdir = workdir
+    self.Record = RecordClass
     if method == 'counts':
-      self.pivotPath = workdir + "/phrase_pivot"
       self.lexPath = workdir + "/lex_src-trg"
-      self.srcTablePath = workdir + "/phrase_src-trg"
-      self.revPath = workdir + "/phrase_reversed"
-      self.revCountPath = workdir + "/phrase_fgep"
-      self.trgTablePath = workdir + "/phrase_trg-src"
+      self.pivotPath = "%s/%s_pivot" % (workdir, prefix)
+      self.srcTablePath = "%s/%s_src-trg" % (workdir, prefix)
+      self.revPath = "%s/%s_reversed" % (workdir, prefix)
+      self.revCountPath = "%s/%s_fgep" % (workdir, prefix)
+      self.trgTablePath = "%s/%s_trg-src" % (workdir, prefix)
     elif method == 'probs':
       self.pivotPath = savefile
     else:
@@ -104,7 +105,7 @@ def updateFeatures(recPivot, recPair, method):
 
 
 def updateCounts(recPivot, recPair, method):
-  '''ルールの出現頻度を更新'''
+  '''フレーズの出現頻度を更新'''
   counts = recPivot.counts
   features = recPivot.features
   if method == 'counts':
@@ -140,14 +141,14 @@ def calcPhraseTransProbsByCounts(records, method = "counts"):
       rec.features['egfp'] = counts.co / float(srcCount)
 
 
-def calcPhraseTransProbsOnTable(tablePath, savePath):
-  '''ピボットを行ったテーブルを元にフレーズ翻訳確率を計算'''
+def calcPhraseTransProbsOnTable(tablePath, savePath, RecordClass = MosesRecord):
+  '''共起回数の推定されたテーブルを元にフレーズ翻訳確率を計算'''
   tableFile = files.open(tablePath, "r")
   saveFile  = files.open(savePath, "w")
   records = []
   lastSrc = ''
   for line in tableFile:
-    rec = MosesRecord(line)
+    rec = RecordClass(line)
     if rec.src != lastSrc and records:
       calcPhraseTransProbsByCounts(records)
       writeRecords(saveFile, records)
@@ -211,7 +212,7 @@ def pivotRecPairs(workset):
       trgKey = recPair[1].trg + ' |||'
       if not trgKey in records:
         # 対象言語の訳出のレコードがまだ無いので作る
-        recPivot = MosesRecord()
+        recPivot = workset.Record()
         recPivot.src = recPair[0].src
         recPivot.trg = recPair[1].trg
         records[trgKey] = recPivot
@@ -298,7 +299,7 @@ def writeRecordQueue(workset):
 
 
 class PivotFinder:
-  def __init__(self, table1, table2, index1, index2):
+  def __init__(self, table1, table2, index1, index2, RecordClass = MosesRecord):
     self.srcFile = files.open(table1, 'r')
     self.trgFile = files.open(table2, 'r')
     self.srcIndices = findutil.loadIndices(index1)
@@ -306,6 +307,7 @@ class PivotFinder:
     self.srcCount = progress.Counter(scaleup = 1000)
     self.rows = []
     self.rowsCache = cache.Cache(1000)
+    self.Record = RecordClass
 
   def getRow(self):
     if self.rows == None:
@@ -320,7 +322,7 @@ class PivotFinder:
     return self.rows.pop(0)
 
   def makePivot(self, srcLine):
-    recSrc = MosesRecord(srcLine)
+    recSrc = self.Record(srcLine)
     pivotPhrase = recSrc.trg
 
     if pivotPhrase in self.rowsCache:
@@ -330,7 +332,7 @@ class PivotFinder:
       trgLines = findutil.searchIndexed(self.trgFile, self.trgIndices, pivotPhrase)
       self.rowsCache[pivotPhrase] = trgLines
     for trgLine in trgLines:
-      recTrg = MosesRecord(trgLine)
+      recTrg = self.Record(trgLine)
       self.rows.append( [recSrc, recTrg] )
 
 
@@ -353,41 +355,31 @@ def calcLexProb(rec, wordProbs):
   return lexProb
 
 
-def calcLexProbs(tablePath, wordProbs, savePath):
+def calcLexProbs(tablePath, wordProbs, savePath, RecordClass = MosesRecord):
   tableFile = files.open(tablePath, 'r')
   saveFile  = files.open(savePath, 'w')
   for line in tableFile:
-    rec = MosesRecord(line)
+    rec = RecordClass(line)
     rec.features['egfl'] = calcLexProb(rec, wordProbs)
-#    rec.features['fgel'] = calcLexProb(rec, wordProbs, reverse = True)
     saveFile.write( rec.toStr() )
   saveFile.close()
   tableFile.close()
 
-def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
-  # 周辺化を行う対象フレーズ
+
+def pivot(table1, table2, savefile="phrase-table.gz", workdir=".",
+          method = METHOD, nbest = NBEST, threshold = THRESHOLD,
+          RecordClass = MosesRecord, prefix = 'phrase',  **options):
   # recSymbols -> recSymbols -> recSymbols の形の訳出を探す
   try:
-    # オプションの設定
-    method = METHOD
-    if 'method' in options:
-      method = options['method']
-    nbest = NBEST
-    if 'nbest' in options:
-      nbest = options['nbest']
-    threshold = THRESHOLD
-    if 'threshold' in options:
-      threshold = options['threshold']
-
     # 作業ディレクトリの作成
     workdir = workdir + '/pivot'
     files.mkdir(workdir)
     # テーブル1の展開
-    srcWorkTable = workdir + '/phrase_src-pvt'
+    srcWorkTable = "%s/%s_src-pvt" % (workdir, prefix)
     progress.log("table copying into: %s\n" % srcWorkTable)
     files.autoCat(table1, srcWorkTable)
     # テーブル2の展開
-    trgWorkTable = workdir + '/phrase_pvt-trg'
+    trgWorkTable = "%s/%s_pvt-trg" % (workdir, prefix)
     progress.log("table copying into: %s\n" % trgWorkTable)
     files.autoCat(table2, trgWorkTable)
     # インデックス1の作成
@@ -399,13 +391,13 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
     progress.log("making index: %s\n" % trgIndex)
     findutil.saveIndices(trgWorkTable, trgIndex)
     # ワークセットの作成
-    workset = WorkSet(savefile, workdir, method)
+    workset = WorkSet(savefile, workdir, method, RecordClass = RecordClass, prefix = prefix)
     workset.threshold = threshold
     workset.nbest = nbest
     # ワークセットの起動
     workset.start()
     # ピボットで対応するレコードを網羅する
-    finder = PivotFinder(srcWorkTable, trgWorkTable, srcIndex, trgIndex)
+    finder = PivotFinder(srcWorkTable, trgWorkTable, srcIndex, trgIndex, RecordClass = RecordClass)
     currPhrase = ''
     rows = []
     rowCount = 0
@@ -429,8 +421,8 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
         finder.srcCount.update()
         numSrcRecords = finder.srcCount.count
         ratio = 100.0 * numSrcRecords / len(finder.srcIndices)
-        progress.log("source: %d (%3.2f%%), processed: %d, last phrase: %s" %
-                     (numSrcRecords, ratio, rowCount, srcPhrase) )
+        progress.log("source: %d (%3.2f%%), processed: %d, last %s: %s" %
+                     (numSrcRecords, ratio, rowCount, prefix, srcPhrase) )
     # while ループを抜けた
     # 最後のデータ処理
     workset.pivotQueue.put(rows)
@@ -447,27 +439,27 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
       wordProbs = lex.loadWordProbs(workset.lexPath, reverse = False)
       # 順方向の語彙化翻訳確率を求める
       progress.log("calculating lex trans probs into: %s\n" % workset.srcTablePath)
-      calcLexProbs(workset.pivotPath, wordProbs, workset.srcTablePath)
+      calcLexProbs(workset.pivotPath, wordProbs, workset.srcTablePath, RecordClass)
       progress.log("calculated lex trans probs\n")
-      # ルールテーブルを反転させる
-      progress.log("reversing phrase table into: %s\n" % workset.revPath)
-      reverseMosesTable(workset.srcTablePath, workset.revPath)
-      progress.log("reversed phrase table\n")
-      # 逆転したルールテーブルで逆方向のフレーズ翻訳確率を求める
-      progress.log("calculating reversed phrase trans probs into: %s\n" % workset.revCountPath)
-      calcPhraseTransProbsOnTable(workset.revPath, workset.revCountPath)
-      progress.log("calculated reversed phrase trans probs\n")
+      # テーブルを逆転させる
+      progress.log("reversing %s table into: %s\n" % (prefix, workset.revPath) )
+      reverseTable(workset.srcTablePath, workset.revPath, RecordClass)
+      progress.log("reversed %s table\n" % (prefix))
+      # 逆転したテーブルで逆方向のフレーズ翻訳確率を求める
+      progress.log("calculating reversed %s trans probs into: %s\n" % (prefix, workset.revCountPath))
+      calcPhraseTransProbsOnTable(workset.revPath, workset.revCountPath, RecordClass)
+      progress.log("calculated reversed %s trans probs\n" % (prefix))
       # 単語単位の翻訳確率を逆向きにロードする
       progress.log("loading reversed word trans probabilities\n")
       wordProbs = lex.loadWordProbs(workset.lexPath, reverse = True)
       # 逆方向の語彙化翻訳確率を求める
       progress.log("calculating reversed lex trans probs into: %s\n" % workset.trgTablePath)
-      calcLexProbs(workset.revCountPath, wordProbs, workset.trgTablePath)
+      calcLexProbs(workset.revCountPath, wordProbs, workset.trgTablePath, RecordClass)
       progress.log("calculated reversed lex trans probs\n")
-      # 再度ルールテーブルを反転して元に戻す
-      progress.log("reversing phrase table into: %s\n" % workset.savePath)
-      reverseMosesTable(workset.trgTablePath, workset.savePath)
-      progress.log("reversed phrase table\n")
+      # 再度テーブルを反転して元に戻す
+      progress.log("reversing %s table into: %s\n" % (prefix,workset.savePath))
+      reverseTable(workset.trgTablePath, workset.savePath, RecordClass)
+      progress.log("reversed %s table\n" % (prefix))
       #pp.pprint(wordProbs)
       #assert False
   except KeyboardInterrupt:
