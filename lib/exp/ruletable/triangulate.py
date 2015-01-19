@@ -30,6 +30,7 @@ def main():
   parser.add_argument('--nbest', help = 'best n scores for rule pair filtering (default = 20)', type=int, default=NBEST)
   parser.add_argument('--method', help = 'triangulation method', choices=['counts', 'probs'], default=METHOD)
   parser.add_argument('--workdir', help = 'working directory', default='.')
+  parser.add_argument('--lexfile', help = 'word pair counts file', default=None)
   args = vars(parser.parse_args())
 
   args['RecordClass'] = TravatarRecord

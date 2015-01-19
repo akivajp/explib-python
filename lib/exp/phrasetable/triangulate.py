@@ -31,11 +31,20 @@ NBEST = 30
 # 翻訳確率の推定方法 counts/probs
 METHOD = 'counts'
 
+# ピボット時にターゲットレコードの検索履歴を残す件数
+#CACHESIZE = 1000
+CACHESIZE = 10000
+
+IGNORE1 = False
+IGNORE2 = False
+IGNORE100 = False
+
 pp = pprint.PrettyPrinter()
 
 class WorkSet:
   '''マルチプロセス処理に必要な情報をまとめたもの'''
-  def __init__(self, savefile, workdir, method, RecordClass = MosesRecord, prefix = "phrase"):
+  def __init__(self, savefile, workdir, method, RecordClass = MosesRecord, **options):
+    prefix = options.get('prefix', 'phrase')
     self.method = method
     self.nbest = NBEST
     self.outQueue = multiprocessing.Queue()
@@ -46,12 +55,14 @@ class WorkSet:
     self.workdir = workdir
     self.Record = RecordClass
     if method == 'counts':
-      self.lexPath = workdir + "/lex_src-trg"
+#      self.lexPath = workdir + "/lex_src-trg"
       self.pivotPath = "%s/%s_pivot" % (workdir, prefix)
-      self.srcTablePath = "%s/%s_src-trg" % (workdir, prefix)
+#      self.srcTablePath = "%s/%s_src-trg" % (workdir, prefix)
       self.revPath = "%s/%s_reversed" % (workdir, prefix)
-      self.revCountPath = "%s/%s_fgep" % (workdir, prefix)
-      self.trgTablePath = "%s/%s_trg-src" % (workdir, prefix)
+      self.trgCountPath = "%s/%s_trg" % (workdir, prefix)
+      self.revTrgCountPath = "%s/%s_revtrg" % (workdir, prefix)
+      self.countPath = "%s/%s_pprobs" % (workdir, prefix)
+#      self.trgTablePath = "%s/%s_trg-src" % (workdir, prefix)
     elif method == 'probs':
       self.pivotPath = savefile
     else:
@@ -110,9 +121,13 @@ def updateCounts(recPivot, recPair, method):
   features = recPivot.features
   if method == 'counts':
     counts.co += min(recPair[0].counts.co, recPair[1].counts.co)
+#    counts.co += recPair[0].counts.co * recPair[1].counts.co
   elif method == 'probs':
-    counts.co += math.sqrt(recPair[0].counts.co * recPair[0].counts.co)
-    counts.src = counts.co / features['egfp']
+#    counts.co += math.sqrt(recPair[0].counts.co * recPair[0].counts.co)
+#    counts.src = counts.co / features['egfp']
+#    counts.trg = counts.co / features['fgep']
+    counts.src = recPair[0].counts.src
+    counts.co  = counts.src * features['egfp']
     counts.trg = counts.co / features['fgep']
   else:
     assert False, "Invalid method"
@@ -120,6 +135,8 @@ def updateCounts(recPivot, recPair, method):
 
 def mergeAligns(recPivot, recPair):
   '''アラインメントのマージを試みる'''
+  if recPivot.aligns:
+    return
   alignSet = set()
   alignMapSrcPvt = recPair[0].alignMap
   alignMapPvtTrg = recPair[1].alignMap
@@ -141,7 +158,25 @@ def calcPhraseTransProbsByCounts(records, method = "counts"):
       rec.features['egfp'] = counts.co / float(srcCount)
 
 
-def calcPhraseTransProbsOnTable(tablePath, savePath, RecordClass = MosesRecord):
+def filterByCountRatioToMax(records, div = 100):
+  coMax = 0
+  for rec in flattenRecords(records):
+    coMax = max(coMax, rec.counts.co)
+  if isinstance(records, list):
+    newRecords = []
+    for rec in records:
+      if rec.counts.co >= coMax / float(div):
+        newRecords.append( rec )
+    records = newRecords
+  elif isinstance(records, dict):
+    newRecords = {}
+    for key, rec in records.items():
+      if rec.counts.co >= coMax / float(div):
+        newRecords[key] = rec
+    records = newRecords
+  return records
+
+def calcPhraseTransProbsOnTable(tablePath, savePath, nbest = 0, RecordClass = MosesRecord):
   '''共起回数の推定されたテーブルを元にフレーズ翻訳確率を計算'''
   tableFile = files.open(tablePath, "r")
   saveFile  = files.open(savePath, "w")
@@ -150,12 +185,27 @@ def calcPhraseTransProbsOnTable(tablePath, savePath, RecordClass = MosesRecord):
   for line in tableFile:
     rec = RecordClass(line)
     if rec.src != lastSrc and records:
+      if IGNORE100:
+        records = filterByCountRatioToMax(records, 100)
+      # 共起回数のn-bestでフィルタリングしてみる
+      if nbest > 0:
+        if len(records) > nbest:
+          scores = []
+          for rec in records:
+            scores.append( (rec.counts.co, rec) )
+          scores.sort(reverse = True)
+          bestRecords = []
+          for _, rec in scores[:nbest]:
+            bestRecords.append( rec )
+          records = bestRecords
       calcPhraseTransProbsByCounts(records)
       writeRecords(saveFile, records)
       records = []
     records.append(rec)
     lastSrc = rec.src
   if records:
+    if IGNORE100:
+      records = filterByCountRatioToMax(records, 100)
     calcPhraseTransProbsByCounts(records)
     writeRecords(saveFile, records)
   saveFile.close()
@@ -181,7 +231,10 @@ def flattenRecords(records, sort = False):
     else:
       return records.values()
   elif type(records) == list:
-    return records
+    if sort:
+      return sorted(records)
+    else:
+      return records
   else:
     assert False, "Invalid records"
 
@@ -209,6 +262,12 @@ def pivotRecPairs(workset):
       break
     records = {}
     for recPair in rows:
+#      if IGNORE1:
+#        if min(recPair[0].counts.co, recPair[1].counts.co) <= 1:
+#          continue
+      if IGNORE2:
+        if max(recPair[0].counts.co, recPair[1].counts.co) <= 2:
+          continue
       trgKey = recPair[1].trg + ' |||'
       if not trgKey in records:
         # 対象言語の訳出のレコードがまだ無いので作る
@@ -225,20 +284,28 @@ def pivotRecPairs(workset):
       mergeAligns(recPivot, recPair)
     # この時点で1つの原言語フレーズと、対応する目的言語フレーズが確定する
     if workset.method == "counts":
+      # 共起回数のn-bestでフィルタリングする
+      if workset.nbest > 0:
+        if len(records) > workset.nbest:
+          scores = []
+          for key, rec in records.items():
+            scores.append( (rec.counts.co, key) )
+          scores.sort(reverse = True)
+          bestRecords = {}
+          for _, key in scores[:workset.nbest]:
+            bestRecords[key] = records[key]
+          records = bestRecords
+      if IGNORE1:
+        ignore = []
+        for key, rec in records.items():
+          if rec.counts.co <= 1:
+            ignore.append(key)
+        for key in ignore:
+          del records[key]
+      if IGNORE100:
+        records = filterByCountRatioToMax(records, 100)
       # 順方向の翻訳確率を求める
-      calcPhraseTransProbsByCounts(records, workset.method)
-      # 単語対応の数をカウントする
-      if records:
-        srcSymbols = records.values()[0].srcSymbols
-        if len(srcSymbols) == 1:
-          for rec in records.values():
-            trgSymbols = rec.trgSymbols
-            if len(trgSymbols) == 1:
-              src = srcSymbols[0]
-              trg = trgSymbols[0]
-              srcCountDict[src] += rec.counts.co
-              trgCountDict[trg] += rec.counts.co
-              coCountDict[(src,trg)] += rec.counts.co
+#      calcPhraseTransProbsByCounts(records, workset.method)
     # threshold が設定されている場合、しきい値以下の翻訳確率を持つレコードは無視
     if workset.threshold < 0:
       # 非常に小さな翻訳確率のフレーズは無視する
@@ -250,13 +317,15 @@ def pivotRecPairs(workset):
         del records[key]
     # n-best が設定されている場合はスコアでソートしてフィルタリング
     if workset.nbest > 0:
-      scores = {}
-      for key, rec in records.items():
-        scores[key] = rec.features['egfp']
-      bestRecords = {}
-      for key in sorted(scores.keys(), reverse=True, key=lambda pair: scores[key])[:workset.nbest]:
-        bestRecords[key] = records[key]
-      records = bestRecords
+      if len(records) > workset.nbest:
+        scores = []
+        for key, rec in records.items():
+          scores.append( (rec.features['egfp'],key) )
+        scores.sort(reverse = True)
+        bestRecords = {}
+        for _, key in scores[:workset.nbest]:
+          bestRecords[key] = records[key]
+        records = bestRecords
     # レコードをキューに追加して、別プロセスに書き込んでもらう
     if records:
       workset.pivotCount.add( len(records) )
@@ -266,19 +335,19 @@ def pivotRecPairs(workset):
   # while ループを抜けた
   # write_records も終わらせる
   workset.outQueue.put(None)
-  # 共起回数推定の場合のみ
-  if workset.method == "counts":
-    # 単語対応のカウントを元に単語翻訳確率を出力する
-    progress.log("writing lex file into: %s\n" % workset.lexPath)
-    lexFile = files.open(workset.lexPath, 'w')
-    for pair in sorted(coCountDict.keys()):
-      (src,trg) = pair
-      egfl = coCountDict[pair] / float(srcCountDict[src])
-      fgel = coCountDict[pair] / float(trgCountDict[trg])
-      buf = "%s %s %s %s\n" % (src, trg, egfl, fgel)
-      lexFile.write(buf)
-    lexFile.close()
-    progress.log("writed lex file\n")
+#  # 共起回数推定の場合のみ
+#  if workset.method == "counts":
+#    # 単語対応のカウントを元に単語翻訳確率を出力する
+#    progress.log("writing lex file into: %s\n" % workset.lexPath)
+#    lexFile = files.open(workset.lexPath, 'w')
+#    for pair in sorted(coCountDict.keys()):
+#      (src,trg) = pair
+#      egfl = coCountDict[pair] / float(srcCountDict[src])
+#      fgel = coCountDict[pair] / float(trgCountDict[trg])
+#      buf = "%s %s %s %s\n" % (src, trg, egfl, fgel)
+#      lexFile.write(buf)
+#    lexFile.close()
+#    progress.log("writed lex file\n")
 
 
 def writeRecords(fileObj, records):
@@ -306,7 +375,7 @@ class PivotFinder:
     self.trgIndices = findutil.loadIndices(index2)
     self.srcCount = progress.Counter(scaleup = 1000)
     self.rows = []
-    self.rowsCache = cache.Cache(1000)
+    self.rowsCache = cache.Cache(CACHESIZE)
     self.Record = RecordClass
 
   def getRow(self):
@@ -336,41 +405,74 @@ class PivotFinder:
       self.rows.append( [recSrc, recTrg] )
 
 
-#def calcLexProb(rec, wordProbs, reverse = False):
-def calcLexProb(rec, wordProbs):
-  minProb = 10 ** -5
-  lexProb = 1
-  srcTerms = rec.srcTerms
-  trgTerms = rec.trgTerms
-  alignMap = rec.alignMap
-  for srcIndex, trgIndices in alignMap.items():
-    srcTerm = srcTerms[srcIndex]
-    srcSumProb = 0
-    for t in trgIndices:
-      trgTerm = trgTerms[t]
-      pair = (srcTerm, trgTerm)
-      pairProb = wordProbs.get(pair, minProb)
-      srcSumProb += pairProb
-    lexProb *= (srcSumProb / len(trgIndices))
-  return lexProb
+#def calcLexWeight(rec, lexProbs):
+def calcLexWeight(rec, lexCounts, reverse = False):
+#  minProb = 10 ** -2
+  lexWeight = 1
+#  alignMapRev = rec.alignMapRev
+  if not reverse:
+    minProb  = 1 / float(lexCounts.trgCounts["NULL"])
+    # 順方向の場合は逆向きのアラインメントマップを使う
+    alignMap = rec.alignMapRev
+    srcTerms = rec.srcTerms
+    trgTerms = rec.trgTerms
+  else:
+    minProb = 1 / float(lexCounts.srcCounts["NULL"])
+    alignMap = rec.alignMap
+    srcTerms = rec.trgTerms
+    trgTerms = rec.srcTerms
+  for trgIndex in range(len(trgTerms)):
+    trgTerm = trgTerms[trgIndex]
+    if trgIndex in alignMap:
+      trgSumProb = 0
+      srcIndices = alignMap[trgIndex]
+      for srcIndex in srcIndices:
+        srcTerm = srcTerms[srcIndex]
+#        pair = (srcTerm, trgTerm)
+#        lexProb = lexProbs.get(pair, minProb)
+        if not reverse:
+          lexProb = lexCounts.calcLexProb(srcTerm, trgTerm)
+        else:
+          lexProb = lexCounts.calcLexProbRev(trgTerm, srcTerm)
+        trgSumProb += lexProb
+      lexWeight *= (trgSumProb / len(srcIndices))
+    else:
+#      lexWeight *= minProb
+      if not reverse:
+        lexWeight *= lexCounts.calcLexProb("NULL", trgTerm)
+      else:
+        lexWeight *= lexCounts.calcLexProb(trgTerm, "NULL")
+  return lexWeight
 
-
-def calcLexProbs(tablePath, wordProbs, savePath, RecordClass = MosesRecord):
+#def calcLexWeights(tablePath, wordProbs, savePath, RecordClass = MosesRecord):
+def calcLexWeights(tablePath, lexCounts, savePath, RecordClass = MosesRecord):
   tableFile = files.open(tablePath, 'r')
   saveFile  = files.open(savePath, 'w')
   for line in tableFile:
     rec = RecordClass(line)
-    rec.features['egfl'] = calcLexProb(rec, wordProbs)
+#    rec.features['egfl'] = calcLexWeight(rec, lexCounts)
+    rec.features['egfl'] = calcLexWeight(rec, lexCounts, reverse = False)
+    rec.features['fgel'] = calcLexWeight(rec, lexCounts, reverse = True)
     saveFile.write( rec.toStr() )
   saveFile.close()
   tableFile.close()
 
 
 def pivot(table1, table2, savefile="phrase-table.gz", workdir=".",
-          method = METHOD, nbest = NBEST, threshold = THRESHOLD,
-          RecordClass = MosesRecord, prefix = 'phrase',  **options):
+          method = METHOD, nbest = NBEST, **options):
   # recSymbols -> recSymbols -> recSymbols の形の訳出を探す
   try:
+    # オプション初期値の設定
+    RecordClass = options.get('RecordClass', MosesRecord)
+    prefix = options.get('prefix', 'phrase')
+    threshold = options.get('threshold', THRESHOLD)
+    lexPath   = options.get('lexfile', None)
+    method    = options.get('method', METHOD)
+
+    if method == 'counts':
+      if lexPath == None:
+        assert False, "lexfile is not given"
+
     # 作業ディレクトリの作成
     workdir = workdir + '/pivot'
     files.mkdir(workdir)
@@ -436,30 +538,27 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".",
     if workset.method == 'counts':
       # 単語単位の翻訳確率をロードする
       progress.log("loading word trans probabilities\n")
-      wordProbs = lex.loadWordProbs(workset.lexPath, reverse = False)
-      # 順方向の語彙化翻訳確率を求める
-      progress.log("calculating lex trans probs into: %s\n" % workset.srcTablePath)
-      calcLexProbs(workset.pivotPath, wordProbs, workset.srcTablePath, RecordClass)
-      progress.log("calculated lex trans probs\n")
+      lexCounts = lex.loadWordPairCounts(lexPath)
       # テーブルを逆転させる
       progress.log("reversing %s table into: %s\n" % (prefix, workset.revPath) )
-      reverseTable(workset.srcTablePath, workset.revPath, RecordClass)
+      reverseTable(workset.pivotPath, workset.revPath, RecordClass)
       progress.log("reversed %s table\n" % (prefix))
       # 逆転したテーブルで逆方向のフレーズ翻訳確率を求める
-      progress.log("calculating reversed %s trans probs into: %s\n" % (prefix, workset.revCountPath))
-      calcPhraseTransProbsOnTable(workset.revPath, workset.revCountPath, RecordClass)
-      progress.log("calculated reversed %s trans probs\n" % (prefix))
-      # 単語単位の翻訳確率を逆向きにロードする
-      progress.log("loading reversed word trans probabilities\n")
-      wordProbs = lex.loadWordProbs(workset.lexPath, reverse = True)
-      # 逆方向の語彙化翻訳確率を求める
-      progress.log("calculating reversed lex trans probs into: %s\n" % workset.trgTablePath)
-      calcLexProbs(workset.revCountPath, wordProbs, workset.trgTablePath, RecordClass)
-      progress.log("calculated reversed lex trans probs\n")
+      progress.log("calculating reversed phrase trans probs into: %s\n" % (workset.trgCountPath))
+      calcPhraseTransProbsOnTable(workset.revPath, workset.trgCountPath, nbest = workset.nbest, RecordClass = RecordClass)
+      progress.log("calculated reversed phrase trans probs\n")
       # 再度テーブルを反転して元に戻す
-      progress.log("reversing %s table into: %s\n" % (prefix,workset.savePath))
-      reverseTable(workset.trgTablePath, workset.savePath, RecordClass)
+      progress.log("reversing %s table into: %s\n" % (prefix,workset.revTrgCountPath))
+      reverseTable(workset.trgCountPath, workset.revTrgCountPath, RecordClass)
       progress.log("reversed %s table\n" % (prefix))
+      # 順方向の翻訳確率を求める
+      progress.log("calculating phrase trans probs into: %s\n" % (workset.countPath))
+      calcPhraseTransProbsOnTable(workset.revTrgCountPath, workset.countPath, nbest = 0, RecordClass = RecordClass)
+      progress.log("calculated phrase trans probs\n")
+      # 語彙化翻訳確率を求める
+      progress.log("calculating lex weights into: %s\n" % workset.savePath)
+      calcLexWeights(workset.countPath, lexCounts, workset.savePath, RecordClass)
+      progress.log("calculated lex weights\n")
       #pp.pprint(wordProbs)
       #assert False
   except KeyboardInterrupt:
@@ -478,6 +577,7 @@ def main():
   parser.add_argument('--nbest', help = 'best n scores for phrase pair filtering (default = 20)', type=int, default=NBEST)
   parser.add_argument('--method', help = 'triangulation method', choices=['counts', 'probs'], default=METHOD)
   parser.add_argument('--workdir', help = 'working directory', default='.')
+  parser.add_argument('--lexfile', help = 'word pair counts file', default=None)
   args = vars(parser.parse_args())
 
   pivot(**args)
