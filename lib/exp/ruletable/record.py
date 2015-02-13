@@ -5,6 +5,7 @@
 
 import math
 
+from exp.common import cache
 from exp.phrasetable import record
 
 class TravatarRecord(record.Record):
@@ -16,8 +17,10 @@ class TravatarRecord(record.Record):
   def loadLine(self, line, split = '|||'):
     if line:
       fields = line.strip().split(split)
-      self.src = fields[0].strip()
-      self.trg = fields[1].strip()
+      self.src = intern( fields[0].strip() )
+#      self.src = cache.intern( fields[0].strip() )
+      self.trg = intern( fields[1].strip() )
+#      self.trg = cache.intern( fields[1].strip() )
       self.features = getTravatarFeatures(fields[2])
       listCounts = record.getCounts(fields[3])
       self.counts.setCounts(co = listCounts[0], src = listCounts[1], trg = listCounts[2])
@@ -43,7 +46,8 @@ class TravatarRecord(record.Record):
     strFeatures = getStrTravatarFeatures(self.features)
     strCounts   = "%s %s %s" % (self.counts.co, self.counts.src, self.counts.trg)
     strAligns = str.join(' ', self.aligns)
-    buf = str.join(s, [self.src, self.trg, strFeatures, strCounts, strAligns]) + "\n"
+#    buf = str.join(s, [self.src, self.trg, strFeatures, strCounts, strAligns]) + "\n"
+    buf = str.join(s, [str(self.src), str(self.trg), strFeatures, strCounts, strAligns]) + "\n"
     return buf
 
   def getReversed(self):

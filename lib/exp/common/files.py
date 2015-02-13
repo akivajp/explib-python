@@ -31,7 +31,8 @@ def getContentSize(path):
   '''圧縮/非圧縮のファイルのサイズを透過的に調べる'''
   try:
     f_in = _open(path, 'rb')
-    if get_ext(path) == '.gz':
+#    if getExt(path) == '.gz':
+    if isGzipped(path):
       f_in.seek(-8, 2)
       crc32 = gzip.read32(f_in)
       isize = gzip.read32(f_in)
@@ -100,15 +101,21 @@ def mkdir(dirname, **options):
     os.makedirs(dirname, **ops)
 
 def open(filename, mode = 'r'):
-  '''圧縮/非圧縮のファイルを透過的に開く'''
-  if getExt(filename) == '.gz' or isGzipped(filename):
-    fileObj = gzip.open(filename, mode)
-  else:
-    fileObj = _open(filename, mode)
-  if mode.find('r') >= 0:
-    return codecs.getreader('utf-8')(fileObj)
-  else:
-    return codecs.getwriter('utf-8')(fileObj)
+    '''圧縮/非圧縮のファイルを透過的に開く'''
+    if getExt(filename) == '.gz' or isGzipped(filename):
+        fileObj = gzip.open(filename, mode)
+    else:
+        fileObj = _open(filename, mode)
+    if str is bytes:
+        # ASCIIベースの文字列 (Python2以前)
+        return fileObj
+    else:
+        # Unicodeベースの文字列 (Python3以降)
+        if mode.find('r') >= 0:
+            return codecs.getreader('utf-8')(fileObj)
+        else:
+#            return codecs.getwriter('utf-8')(fileObj)
+            return fileObj
 
 def rawtell(fileobj):
   '''透過的にファイルの現在位置を求める．圧縮されたデータの場合は圧縮データバッファの位置を求める'''

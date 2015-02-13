@@ -24,7 +24,8 @@ def reverseTable(srcFile, saveFile, RecordClass = record.MosesRecord):
     else:
       saveFile = open(saveFile, 'w')
   pipeSort = subprocess.Popen(['sort'], env={"LC_ALL":"C"}, stdin=subprocess.PIPE, stdout=saveFile)
-  inputSort = codecs.getwriter('utf-8')(pipeSort.stdin)
+#  inputSort = codecs.getwriter('utf-8')(pipeSort.stdin)
+  inputSort = pipeSort.stdin
   for line in srcFile:
     rec = RecordClass(line)
     inputSort.write( rec.getReversed().toStr() )

@@ -16,7 +16,8 @@ from exp.ruletable.record import TravatarRecord
 THRESHOLD = 0 # 打ち切りなし
 
 # フィルタリングで残す数
-NBEST = 40
+#NBEST = 40
+NBEST = 20
 
 # 翻訳確率の推定方法 counts/probs
 METHOD = 'counts'
@@ -28,7 +29,8 @@ def main():
   parser.add_argument('savefile', help = 'path for saving travatar rule table file')
   parser.add_argument('--threshold', help = 'threshold for ignoring the phrase translation probability (real number)', type=float, default=THRESHOLD)
   parser.add_argument('--nbest', help = 'best n scores for rule pair filtering (default = 20)', type=int, default=NBEST)
-  parser.add_argument('--method', help = 'triangulation method', choices=['counts', 'probs'], default=METHOD)
+#  parser.add_argument('--method', help = 'triangulation method', choices=['counts', 'probs'], default=METHOD)
+  parser.add_argument('--method', help = 'triangulation method', choices=['counts', 'probs', 'hybrid'], default=METHOD)
   parser.add_argument('--workdir', help = 'working directory', default='.')
   parser.add_argument('--lexfile', help = 'word pair counts file', default=None)
   args = vars(parser.parse_args())

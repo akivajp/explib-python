@@ -3,6 +3,9 @@
 
 '''フレーズテーブルのレコードを扱うクラス'''
 
+from exp.common import cache
+from exp.common import files
+
 class CoOccurrence(object):
   def __init__(self, src = 0, trg = 0, co = 0):
     self.src = src
@@ -37,7 +40,9 @@ class CoOccurrence(object):
     self.co  = getNumber(self.co,  margin)
 
   def __str__(self):
-    return "CoOccurrence(src = %s, trg = %s, co = %s)" % (src, trg, co)
+      name = self.__class__.__name__
+      mod  = self.__class__.__module__
+      return "%s.%s(src = %s, trg = %s, co = %s)" % (mod, name, src, trg, co)
 
 class Record(object):
   def __init__(self):
@@ -63,59 +68,96 @@ class Record(object):
     recRev.aligns = getRevAligns(self.aligns)
     revFeatures = {}
     if 'egfp' in self.features:
-      revFeatures['fgep'] = self.features['egfp']
+      revFeatures[intern('fgep')] = self.features['egfp']
+#      revFeatures[cache.intern('fgep')] = self.features['egfp']
     if 'egfl' in self.features:
-      revFeatures['fgel'] = self.features['egfl']
+      revFeatures[intern('fgel')] = self.features['egfl']
+#      revFeatures[cache.intern('fgel')] = self.features['egfl']
     if 'fgep' in self.features:
-      revFeatures['egfp'] = self.features['fgep']
+      revFeatures[intern('egfp')] = self.features['fgep']
+#      revFeatures[cache.intern('egfp')] = self.features['fgep']
     if 'fgel' in self.features:
-      revFeatures['egfl'] = self.features['fgel']
+      revFeatures[intern('egfl')] = self.features['fgel']
+#      revFeatures[cache.intern('egfl')] = self.features['fgel']
     if 'p' in self.features:
-      revFeatures['p'] = self.features['p']
-    revFeatures['w'] = len(self.srcTerms)
+      revFeatures[intern('p')] = self.features['p']
+#      revFeatures[cache.intern('p')] = self.features['p']
+    revFeatures[intern('w')] = len(self.srcTerms)
+#    revFeatures[cache.intern('w')] = len(self.srcTerms)
     recRev.features = revFeatures
     return recRev
 
 
 class MosesRecord(Record):
-  def __init__(self, line = "", split = '|||'):
-    Record.__init__(self)
-    self.split = split
-    self.loadLine(line, split)
+    def __init__(self, line = "", split = '|||'):
+        Record.__init__(self)
+        self.split = split
+        self.loadLine(line, split)
 
-  def loadLine(self, line, split = '|||'):
-    if line:
-      fields = line.strip().split(split)
-      self.src = fields[0].strip()
-      self.trg = fields[1].strip()
-      self.features = getMosesFeatures(fields[2])
-      self.aligns = fields[3].strip().split()
-      listCounts = getCounts(fields[4])
-      self.counts.setCounts(trg = listCounts[0], src = listCounts[1], co = listCounts[2])
+    def loadLine(self, line, split = '|||'):
+        if line:
+            fields = line.strip().split(split)
+            self.src = intern( fields[0].strip() )
+#            self.src = cache.intern( fields[0].strip() )
+            self.trg = intern( fields[1].strip() )
+#            self.trg = cache.intern( fields[1].strip() )
+            self.features = getMosesFeatures(fields[2])
+            self.aligns = fields[3].strip().split()
+            listCounts = getCounts(fields[4])
+            self.counts.setCounts(trg = listCounts[0], src = listCounts[1], co = listCounts[2])
 
-  def getSrcSymbols(self):
-    return self.src.split(' ')
-  srcSymbols = property(getSrcSymbols)
+    def getSrcSymbols(self):
+        return self.src.split(' ')
+    srcSymbols = property(getSrcSymbols)
 
-  def getSrcTerms(self):
-    return self.src.split(' ')
-  srcTerms = property(getSrcTerms)
+    def getSrcTerms(self):
+        return self.src.split(' ')
+    srcTerms = property(getSrcTerms)
 
-  def getTrgSymbols(self):
-    return self.trg.split(' ')
-  trgSymbols = property(getTrgSymbols)
+    def getTrgSymbols(self):
+        return self.trg.split(' ')
+    trgSymbols = property(getTrgSymbols)
 
-  def getTrgTerms(self):
-    return self.trg.split(' ')
-  trgTerms = property(getTrgTerms)
+    def getTrgTerms(self):
+        return self.trg.split(' ')
+    trgTerms = property(getTrgTerms)
 
-  def toStr(self, s = ' ||| '):
-    strFeatures = getStrMosesFeatures(self.features)
-    strAligns = str.join(' ', self.aligns)
-    self.counts.simplify(0.0001)
-    strCounts   = "%s %s %s" % (self.counts.trg, self.counts.src, self.counts.co)
-    buf = str.join(s, [self.src, self.trg, strFeatures, strAligns, strCounts]) + "\n"
-    return buf
+    def toStr(self, s = ' ||| '):
+        strFeatures = getStrMosesFeatures(self.features)
+        strAligns = str.join(' ', self.aligns)
+        self.counts.simplify(0.0001)
+        strCounts   = "%s %s %s" % (self.counts.trg, self.counts.src, self.counts.co)
+#        buf = str.join(s, [self.src, self.trg, strFeatures, strAligns, strCounts]) + "\n"
+        buf = str.join(s, [str(self.src), str(self.trg), strFeatures, strAligns, strCounts]) + "\n"
+        return buf
+
+
+class RecordReader(object):
+  def __init__(self, tablePath, **options):
+    self.RecordClass = options.get('RecordClass', MosesRecord)
+    self.tableFile = files.open(tablePath, 'r')
+    self.records = []
+
+  def getRecords(self):
+    line = self.tableFile.readline()
+    if line == "":
+      records = self.records
+      self.records = []
+      return records
+    while line:
+      rec = self.RecordClass(line)
+      if len(self.records) == 0:
+        self.records.append(rec)
+      elif rec.src == self.records[0].src:
+        self.records.append(rec)
+      else:
+        records = self.records
+        self.records = [rec]
+        return records
+      line = self.tableFile.readline()
+    records = self.records
+    self.records = []
+    return records
 
 
 def getAlignMap(aligns, reverse = False):
@@ -132,21 +174,17 @@ def getCounts(field):
   return map(getNumber, field.split())
 
 def getNumber(anyNum, margin = 0):
-  numFloat = float(anyNum)
-  numInt = int(numFloat)
-  if margin > 0:
-    if abs(numInt - numFloat) < margin:
-      return numInt
-    elif abs(numInt+1 - numFloat) < margin:
-      return numInt+1
-    elif abs(numInt-1 - numFloat) < margin:
-      return numInt-1
+    numFloat = float(anyNum)
+    numInt = int(round(numFloat))
+    if margin > 0:
+        if abs(numInt - numFloat) < margin:
+            return numInt
+        else:
+            return numFloat
+    elif numFloat == numInt:
+        return numInt
     else:
-      return numFloat
-  elif numFloat == numInt:
-    return numInt
-  else:
-    return numFloat
+        return numFloat
 
 def getRevAligns(aligns):
   revAlignList = []
@@ -157,13 +195,13 @@ def getRevAligns(aligns):
 
 
 def getMosesFeatures(field):
-  features = {}
-  scores = map(getNumber, field.split())
-  features['fgep'] = scores[0]
-  features['fgel'] = scores[1]
-  features['egfp'] = scores[2]
-  features['egfl'] = scores[3]
-  return features
+    features = {}
+    scores = map(getNumber, field.split())
+    features[intern('fgep')] = scores[0]
+    features[intern('fgel')] = scores[1]
+    features[intern('egfp')] = scores[2]
+    features[intern('egfl')] = scores[3]
+    return features
 
 def getStrMosesFeatures(dicFeatures):
   '''素性辞書を、スペース区切りのスコア文字列に戻す'''
