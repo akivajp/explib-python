@@ -3,9 +3,10 @@
 
 #NBEST = 0
 #NBEST = 20
-NBEST = 50
+#NBEST = 50
+NBEST = 10
 
-methods = ['countmin', 'prodprob', 'bidirmin', 'bidirgmean']
+methods = ['countmin', 'prodprob', 'bidirmin', 'bidirgmean', 'bidirmax']
 METHOD = 'countmin'
 
 import argparse

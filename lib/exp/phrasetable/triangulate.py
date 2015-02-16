@@ -26,17 +26,17 @@ from exp.phrasetable.reverse import reverseTable
 THRESHOLD = 0 # 打ち切りなし
 
 # フィルタリングで残す数
-NBEST = 30
+NBEST = 20
 
 # 翻訳確率の推定方法 counts/probs/counts+
 # 翻訳確率の推定方法 countmin/prod/bidirect
-methods = ['countmin', 'prodprob', 'bidirmin', 'bidirgmean']
+methods = ['countmin', 'prodprob', 'prodprob', 'bidirmin', 'bidirgmean', 'bidirmax']
 #METHOD = 'counts'
 #METHOD = 'hybrid'
 METHOD = 'countmin'
 
 # 語彙翻訳確率の推定方法
-lexMethods = ['prodweight', 'countmin', 'prodprob', 'bidirmin', 'bidirgmean','table', 'countmin+table', 'prodprob+table', 'bidirmin+table', 'bidirgmean+table']
+lexMethods = ['prodweight', 'countmin', 'prodprob', 'bidirmin', 'bidirgmean', 'bidirmax', 'table', 'countmin+table', 'prodprob+table', 'bidirmin+table', 'bidirgmean+table']
 LEX_METHOD = 'prodweight'
 
 NULLS = 10**4
@@ -53,7 +53,11 @@ class WorkSet:
   '''マルチプロセス処理に必要な情報をまとめたもの'''
   def __init__(self, savefile, workdir, method, RecordClass = MosesRecord, **options):
     prefix = options.get('prefix', 'phrase')
+    self.multiTarget = options.get('multiTarget', False)
     self.method = method
+    if method.find('multi') >= 0:
+        self.multiTarget = True
+        self.method = method.replace('multi','').replace('+','')
     self.nbest = NBEST
     self.outQueue = multiprocessing.Queue()
     self.pivotCount = progress.Counter(scaleup = 1000)
@@ -106,16 +110,23 @@ class WorkSet:
     self.recordProc.terminate()
 
 
-def updateFeatures(recPivot, recPair, method):
+def updateFeatures(recPivot, recPair, method, multiTarget = False):
     '''素性の更新'''
     features = recPivot.features
     srcFeatures = recPair[0].features
     trgFeatures = recPair[1].features
-    if method == 'prodprob':
+    if method.find('prodprob') >= 0:
         # スコアを掛け合わせて周辺化
-        for key in ['egfl', 'egfp', 'fgel', 'fgep']:
-            features.setdefault(key, 0)
-            features[key] += (srcFeatures[key] * trgFeatures[key])
+        if not multiTarget:
+            for key in ['egfl', 'egfp', 'fgel', 'fgep']:
+                features.setdefault(key, 0)
+                features[key] += (srcFeatures[key] * trgFeatures[key])
+        if multiTarget:
+            for key in ['egfp', 'fgep']:
+                features.setdefault(key, 0)
+                features[key] += (srcFeatures[key] * trgFeatures[key])
+            for key in ['egfl', 'egfp', 'fgel', 'fgep']:
+                features['1'+key] = srcFeatures[key]
     else:
         # Lexical Weights のみ掛け合わせて周辺化
         for key in ['egfl', 'fgel']:
@@ -124,8 +135,14 @@ def updateFeatures(recPivot, recPair, method):
     # p と w は後の方を優先する
     if 'p' in trgFeatures:
         features['p'] = trgFeatures['p']
-    if 'w' in trgFeatures:
-        features['w'] = trgFeatures['w']
+    if multiTarget:
+        if 'w' in trgFeatures:
+            features['0w'] = trgFeatures['w']
+        if 'w' in srcFeatures:
+            features['1w'] = srcFeatures['w']
+    else:
+        if 'w' in trgFeatures:
+            features['w'] = trgFeatures['w']
 
 
 def updateCounts(recPivot, recPair, method):
@@ -154,10 +171,19 @@ def updateCounts(recPivot, recPair, method):
         co2 = counts2.co * counts1.co / float(counts1.trg)
         counts.co += math.sqrt(co1*co2)
 #        progress.log("%s ||| %s ||| %s ||| (%s %s %s) * (%s %s %s) -> %s %s -> %s\n" % (recPair[0].src, recPair[0].trg, recPair[1].trg, counts1.co, counts1.src, counts1.trg, counts2.co, counts2.src, counts2.trg, co1, co2, math.sqrt(co1*co2)))
+    elif method == 'bidirmax':
+        counts1 = recPair[0].counts
+        counts2 = recPair[1].counts
+        co1 = counts1.co * counts2.co / float(counts2.src)
+        co2 = counts2.co * counts1.co / float(counts1.trg)
+        counts.co += max(co1, co2)
     elif method == 'prodprob':
         counts.src = recPair[0].counts.src
         counts.co  = counts.src * features['egfp']
         counts.trg = counts.co / features['fgep']
+    elif method == 'multi':
+        c = min(recPair[0].counts.co, recPair[1].counts.co)
+        counts.co += c
     else:
         assert False, "Invalid method"
 
@@ -239,6 +265,16 @@ def calcSrcCount(records):
     total += rec.counts.co
   return total
 
+def updateWordPairCounts(lexCounts, records):
+    '''単単語のフレーズ対応を見つけ出して、単語対応のカウントを更新する'''
+    if len(records) > 0:
+        srcSymbols = records.values()[0].srcSymbols
+        if len(srcSymbols) == 1:
+           for rec in records.values():
+               trgSymbols = rec.trgSymbols
+               if len(trgSymbols) == 1:
+                   lexCounts.addPair(srcSymbols[0], trgSymbols[0], rec.counts.co)
+        lexCounts.filterNBestBySrc(srcWord = srcSymbols[0])
 
 def flattenRecords(records, sort = False):
   '''レコード群が辞書であればリストにして返す'''
@@ -271,7 +307,8 @@ def pivotRecPairs(workset):
   共起回数を推定することで翻訳確率の推定を行う
   '''
 
-  pairCounter = lex.PairCounter()
+  lexCounts = lex.PairCounter()
+
   while True:
     # 処理すべきレコード配列を取得
     rows = workset.pivotQueue.get()
@@ -279,8 +316,13 @@ def pivotRecPairs(workset):
         # None を受け取ったらプロセス終了
         break
     records = {}
+    if workset.multiTarget:
+        multiRecords = {}
     for recPair in rows:
         trgKey = recPair[1].trg + ' |||'
+        if workset.multiTarget:
+            strMultiTrg = intern(recPair[1].trg + ' |COL| ' + recPair[0].trg)
+            multiKey = strMultiTrg + ' |||'
         if not trgKey in records:
             # 対象言語の訳出のレコードがまだ無いので作る
             recPivot = workset.Record()
@@ -288,24 +330,30 @@ def pivotRecPairs(workset):
             recPivot.trg = recPair[1].trg
             records[trgKey] = recPivot
         recPivot = records[trgKey]
+        if workset.multiTarget:
+            recMulti = workset.Record()
+            recMulti.src = recPair[0].src
+            recMulti.trg = strMultiTrg
+            multiRecords[multiKey] = recMulti
         # 素性の推定、更新
         updateFeatures(recPivot, recPair, workset.method)
         # 句対応のカウントを更新
         updateCounts(recPivot, recPair, workset.method)
         # アラインメントのマージ
         mergeAligns(recPivot, recPair)
+        if workset.multiTarget:
+            updateFeatures(recMulti, recPair, workset.method, multiTarget = True)
     # この時点で1つの原言語フレーズと、対応する目的言語フレーズが確定する
+    if workset.multiTarget:
+        # マルチターゲットレコードに通常のピボットレコードのスコアを適用
+        for multiKey, recMulti in multiRecords.items():
+            trgPair = recMulti.trg.split(' |COL| ')
+            recPivot = records[trgPair[0]+' |||']
+            for featureKey in ['egfl', 'egfp', 'fgel', 'fgep']:
+                recMulti.features['0'+featureKey] = recPivot.features[featureKey]
     if workset.method != 'prodprob':
-        if len(records) > 0:
-            # 単単語のフレーズ対応を見つけ出して、語彙翻訳確率を出力する
-            srcSymbols = records.values()[0].srcSymbols
-            if len(srcSymbols) == 1:
-                for rec in records.values():
-                    trgSymbols = rec.trgSymbols
-                    if len(trgSymbols) == 1:
-                        pairCounter.addSrc(srcSymbols[0], rec.counts.co)
-                        pairCounter.addTrg(trgSymbols[0], rec.counts.co)
-                        pairCounter.addPair(srcSymbols[0], trgSymbols[0], rec.counts.co)
+        # 単単語のフレーズ対応を見つけ出して、単語対応をカウントする
+        updateWordPairCounts(lexCounts, records)
         # 共起回数のn-bestでフィルタリングする
         if not NOPREFILTER:
             if workset.nbest > 0:
@@ -329,12 +377,17 @@ def pivotRecPairs(workset):
                 ignoring.append(pair)
         for key in ignoring:
             del records[key]
+    if workset.multiTarget:
+        records = multiRecords
     # n-best が設定されている場合は順方向の翻訳確率でソートしてフィルタリング
     if workset.nbest > 0:
         if len(records) > workset.nbest:
             scores = []
             for key, rec in records.items():
-                scores.append( (rec.features['egfp'],key) )
+                if workset.multiTarget:
+                    scores.append( (rec.features['1egfp'],key) )
+                else:
+                    scores.append( (rec.features['egfp'],key) )
             scores.sort(reverse = True)
             bestRecords = {}
             for _, key in scores[:workset.nbest]:
@@ -350,7 +403,8 @@ def pivotRecPairs(workset):
   # writeRecords のプロセスも終わらせる
   workset.outQueue.put(None)
   if workset.method != 'prodprob':
-      lex.saveWordPairCounts(workset.tableLexPath, pairCounter)
+      lexCounts.filterNBestByTrg()
+      lex.saveWordPairCounts(workset.tableLexPath, lexCounts)
 
 
 def writeRecords(fileObj, records):
@@ -472,6 +526,7 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
     method    = options.get('method', METHOD)
     lexMethod = options.get('lexmethod', LEX_METHOD)
     numNulls  = options.get('nulls', NULLS)
+#    multiTarget = options.get('multitarget', False)
 
     if lexMethod not in ('prodweight', 'table'):
         if alignLexPath == None:
@@ -564,7 +619,7 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
             progress.log("loading aligned lex: %s\n", alignLexPath)
             lexCounts = lex.loadWordPairCounts(alignLexPath)
 #    if workset.method == 'countmin':
-    if method in ['countmin', 'bidirmin', 'bidirgmean']:
+    if method in ['countmin', 'bidirmin', 'bidirgmean', 'bidirmax']:
   #      # 単語単位の翻訳確率をロードする
   #      #progress.log("loading word trans probabilities\n")
   #      #lexCounts = lex.loadWordPairCounts(lexPath)
@@ -598,7 +653,8 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
         else:
             progress.log("gzipping into: %s\n" % workset.savePath)
             files.autoCat(workset.countPath, workset.savePath)
-    elif method == 'prodprob':
+#    elif method == 'prodprob':
+    elif method.find('prodprob') >= 0:
         if lexMethod != 'prodweight':
             # 語彙化翻訳確率を求める
             progress.log("calculating lex weights into: %s\n" % workset.savePath)
@@ -607,27 +663,11 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
         else:
             progress.log("gzipping into: %s\n" % workset.savePath)
             files.autoCat(workset.pivotPath, workset.savePath)
+    elif method == 'multi':
+            progress.log("gzipping into: %s\n" % workset.savePath)
+            files.autoCat(workset.pivotPath, workset.savePath)
     else:
         assert False, "Invalid method: %s" % method
-
-#    if workset.method == 'hybrid':
-#      # テーブルを逆転させる
-#      progress.log("reversing %s table into: %s\n" % (prefix, workset.revPath) )
-#      reverseTable(workset.pivotPath, workset.revPath, RecordClass)
-#      progress.log("reversed %s table\n" % (prefix))
-#      # 逆転したテーブルで逆方向のフレーズ翻訳確率を求める
-#      progress.log("calculating reversed phrase trans probs into: %s\n" % (workset.trgCountPath))
-##      calcPhraseTransProbsOnTable(workset.revPath, workset.trgCountPath, nbest = workset.nbest, RecordClass = RecordClass)
-#      calcPhraseTransProbsOnTable(workset.revPath, workset.trgCountPath, **options)
-#      progress.log("calculated reversed phrase trans probs\n")
-#      # 再度テーブルを反転して元に戻す
-#      progress.log("reversing %s table into: %s\n" % (prefix,workset.revTrgCountPath))
-#      reverseTable(workset.trgCountPath, workset.revTrgCountPath, RecordClass)
-#      progress.log("reversed %s table\n" % (prefix))
-#      # 順方向の翻訳確率を求める
-#      progress.log("calculating phrase trans probs into: %s\n" % (workset.savePath))
-#      calcPhraseTransProbsOnTable(workset.revTrgCountPath, workset.savePath, nbest = 0, RecordClass = RecordClass)
-#      progress.log("calculated phrase trans probs\n")
   except KeyboardInterrupt:
     # 例外発生、全てのワーカープロセスを停止させる
     print('')
@@ -642,13 +682,10 @@ def main():
   parser.add_argument('savefile', help = 'path for saving moses phrase table file')
   parser.add_argument('--threshold', help = 'threshold for ignoring the phrase translation probability (real number)', type=float, default=THRESHOLD)
   parser.add_argument('--nbest', help = 'best n scores for phrase pair filtering (default = 20)', type=int, default=NBEST)
-#  parser.add_argument('--method', help = 'triangulation method', choices=['counts', 'probs'], default=METHOD)
-#  parser.add_argument('--method', help = 'triangulation method', choices=['counts', 'probs', 'hybrid'], default=METHOD)
   parser.add_argument('--method', help = 'triangulation method', choices=methods, default=METHOD)
   parser.add_argument('--lexmethod', help = 'lexical triangulation method', choices=lexMethods, default=LEX_METHOD)
   parser.add_argument('--workdir', help = 'working directory', default='.')
   parser.add_argument('--alignlex', help = 'word pair counts file', default=None)
-#  parser.add_argument('--nulls', help = 'number of NULLs (lines) for table lex', type = int, default=0)
   parser.add_argument('--nulls', help = 'number of NULLs (lines) for table lex', type = int, default=NULLS)
   parser.add_argument('--noprefilter', help = 'No pre-filtering', type = bool, default=False)
   args = vars(parser.parse_args())

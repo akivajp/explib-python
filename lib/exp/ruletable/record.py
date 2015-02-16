@@ -101,7 +101,8 @@ def getStrTravatarFeatures(dicFeatures):
   '''素性辞書を、'key=val' という文字列で表したリストに変換する'''
   featureList = []
   for key, val in dicFeatures.items():
-    if key in ['egfl', 'egfp', 'fgel', 'fgep']:
+#    if key in ['egfl', 'egfp', 'fgel', 'fgep']:
+    if key not in ['p', 'w', '0w', '1w']:
       try:
         val = math.log(val)
       except:
@@ -117,6 +118,8 @@ def getTravatarFeatures(field):
     val = record.getNumber(val)
     if key in ['egfl', 'egfp', 'fgel', 'fgep']:
       val = math.e ** val
+#    if key not in ['p', 'w']:
+#      val = math.e ** val
     features[key] = val
   return features
 
