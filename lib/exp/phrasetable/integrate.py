@@ -28,7 +28,7 @@ NBEST = 20
 
 # 翻訳確率の推定方法 counts/probs
 methods = ['count', 'interpolate']
-METHOD = 'counts'
+METHOD = 'count'
 
 lexMethods = ['count', 'interpolate']
 LEX_METHOD = 'interpolate'
@@ -40,6 +40,7 @@ pp = pprint.PrettyPrinter()
 
 def integrateTablePair(tablePath1, tablePath2, savePath, **options):
     RecordClass = options.get('RecordClass', MosesRecord)
+#    method = options.get('method', 'count')
 
     recReader1 = RecordReader(tablePath1, **options)
     recReader2 = RecordReader(tablePath2, **options)
@@ -78,6 +79,7 @@ def integrateTablePair(tablePath1, tablePath2, savePath, **options):
 def mergeRecords(*recListList, **options):
     RecordClass = options.get('RecordClass', MosesRecord)
     nbest = options.get('nbest', NBEST)
+    method = options.get('method', 'count')
 
     merged = {}
     for records in recListList:
@@ -90,6 +92,9 @@ def mergeRecords(*recListList, **options):
                 merged[trgKey] = recMerge
                 recMerge.features['egfl'] = recNew.features['egfl']
                 recMerge.features['fgel'] = recNew.features['fgel']
+                if method == 'interpolate':
+                    recMerge.features['egfp'] = recNew.features['egfp']
+                    recMerge.features['fgep'] = recNew.features['fgep']
             else:
                 recMerge = merged[trgKey]
                 features = recMerge.features
@@ -97,13 +102,21 @@ def mergeRecords(*recListList, **options):
                 F2 = 1 - F1
                 features['egfl'] = features['egfl'] * F1 + recNew.features['egfl'] * F2
                 features['fgel'] = features['fgel'] * F1 + recNew.features['fgel'] * F2
+                if method == 'interpolate':
+                    features['egfp'] = features['egfp'] * F1 + recNew.features['egfp'] * F2
+                    features['fgep'] = features['fgep'] * F1 + recNew.features['fgep'] * F2
             recMerge.counts.co += recNew.counts.co
             recMerge.aligns = set(recMerge.aligns) | set(recNew.aligns)
     if nbest > 0:
         if len(merged) > nbest:
             scores = []
             for key, rec in merged.items():
-                scores.append( (rec.counts.co, key) )
+                if method == 'count':
+                    scores.append( (rec.counts.co, key) )
+                elif method == 'interpolate':
+                    scores.append( (rec.features['egfp'], key) )
+                else:
+                    assert False, "Invalid method: %s" % method
             scores.sort(reverse = True)
             for count, key in scores[nbest:]:
                 del merged[key]
@@ -141,30 +154,37 @@ def integrate(table1, table2, savefile, **options):
 #  progress.log("loading word trans probabilities\n")
 #  lexCounts = lex.loadWordPairCounts(lexfile)
   # テーブルを逆転させる
-  progress.log("reversing %s table into: %s\n" % (prefix, revPath) )
-  reverseTable(mergePath, revPath, RecordClass)
-  progress.log("reversed table\n")
-  # 逆転したテーブルで逆方向のフレーズ翻訳確率を求める
-  progress.log("calculating reversed phrase trans probs into: %s\n" % (trgCountPath))
-  triangulate.calcPhraseTransProbsOnTable(revPath, trgCountPath, RecordClass = RecordClass)
-  progress.log("calculated reversed phrase trans probs\n")
-  # 再度テーブルを反転して元に戻す
-  progress.log("reversing %s table into: %s\n" % (prefix,revTrgCountPath))
-  reverseTable(trgCountPath, revTrgCountPath, RecordClass)
-  progress.log("reversed table\n")
-  # 順方向の翻訳確率を求める
-  progress.log("calculating phrase trans probs into: %s\n" % (countPath))
-  triangulate.calcPhraseTransProbsOnTable(revTrgCountPath, countPath, RecordClass = RecordClass)
-#  triangulate.calcPhraseTransProbsOnTable(revTrgCountPath, savefile, nbest = 0, RecordClass = RecordClass)
-  progress.log("calculated phrase trans probs\n")
-  if lexMethod == 'interpolate':
-      progress.log("gzipping into: %s\n" % savefile)
-      files.autoCat(countPath, savefile)
+  if method == 'count':
+      progress.log("reversing %s table into: %s\n" % (prefix, revPath) )
+      reverseTable(mergePath, revPath, RecordClass)
+      progress.log("reversed table\n")
+      # 逆転したテーブルで逆方向のフレーズ翻訳確率を求める
+      progress.log("calculating reversed phrase trans probs into: %s\n" % (trgCountPath))
+      triangulate.calcPhraseTransProbsOnTable(revPath, trgCountPath, RecordClass = RecordClass)
+      progress.log("calculated reversed phrase trans probs\n")
+      # 再度テーブルを反転して元に戻す
+      progress.log("reversing %s table into: %s\n" % (prefix,revTrgCountPath))
+      reverseTable(trgCountPath, revTrgCountPath, RecordClass)
+      progress.log("reversed table\n")
+      # 順方向の翻訳確率を求める
+      progress.log("calculating phrase trans probs into: %s\n" % (countPath))
+      triangulate.calcPhraseTransProbsOnTable(revTrgCountPath, countPath, RecordClass = RecordClass)
+    #  triangulate.calcPhraseTransProbsOnTable(revTrgCountPath, savefile, nbest = 0, RecordClass = RecordClass)
+      progress.log("calculated phrase trans probs\n")
+      if lexMethod == 'interpolate':
+          progress.log("gzipping into: %s\n" % savefile)
+          files.autoCat(countPath, savefile)
+      else:
+          # 語彙化翻訳確率を求める
+          progress.log("calculating lex weights into: %s\n" % workset.savePath)
+          calcLexWeights(countPath, lexCounts, savefile, RecordClass)
+          progress.log("calculated lex weights\n")
+  elif method == 'interpolate':
+      if lexMethod == 'interpolate':
+          progress.log("gzipping into: %s\n" % savefile)
+          files.autoCat(mergePath, savefile)
   else:
-      # 語彙化翻訳確率を求める
-      progress.log("calculating lex weights into: %s\n" % workset.savePath)
-      calcLexWeights(countPath, lexCounts, savefile, RecordClass)
-      progress.log("calculated lex weights\n")
+      assert False, "Invalid method: %s" % method
 #  # 語彙化翻訳確率を求める
 #  progress.log("calculating lex weights into: %s\n" % savefile)
 #  triangulate.calcLexWeights(countPath, lexCounts, savefile, RecordClass)

@@ -18,13 +18,12 @@ class TravatarRecord(record.Record):
     if line:
       fields = line.strip().split(split)
       self.src = intern( fields[0].strip() )
-#      self.src = cache.intern( fields[0].strip() )
       self.trg = intern( fields[1].strip() )
-#      self.trg = cache.intern( fields[1].strip() )
       self.features = getTravatarFeatures(fields[2])
       listCounts = record.getCounts(fields[3])
       self.counts.setCounts(co = listCounts[0], src = listCounts[1], trg = listCounts[2])
-      self.aligns = fields[4].strip().split()
+#      self.aligns = fields[4].strip().split()
+      self.aligns = record.getAlignSet( fields[4] )
 
   def getSrcSymbols(self):
     return getTravatarSymbols(self.src)
@@ -45,9 +44,9 @@ class TravatarRecord(record.Record):
   def toStr(self, s = ' ||| '):
     strFeatures = getStrTravatarFeatures(self.features)
     strCounts   = "%s %s %s" % (self.counts.co, self.counts.src, self.counts.trg)
-    strAligns = str.join(' ', self.aligns)
-#    buf = str.join(s, [self.src, self.trg, strFeatures, strCounts, strAligns]) + "\n"
-    buf = str.join(s, [str(self.src), str(self.trg), strFeatures, strCounts, strAligns]) + "\n"
+#    strAligns = str.join(' ', self.aligns)
+    strAligns = str.join(' ', sorted(self.aligns))
+    buf = str.join(s, [self.src, self.trg, strFeatures, strCounts, strAligns]) + "\n"
     return buf
 
   def getReversed(self):
@@ -55,7 +54,8 @@ class TravatarRecord(record.Record):
     recRev.src = self.trg
     recRev.trg = self.src
     recRev.counts = self.counts.getReversed()
-    recRev.aligns = record.getRevAligns(self.aligns)
+#    recRev.aligns = record.getRevAligns(self.aligns)
+    recRev.aligns = record.getRevAlignSet(self.aligns)
     revFeatures = {}
     if 'egfp' in self.features:
       revFeatures['fgep'] = self.features['egfp']
@@ -102,7 +102,8 @@ def getStrTravatarFeatures(dicFeatures):
   featureList = []
   for key, val in dicFeatures.items():
 #    if key in ['egfl', 'egfp', 'fgel', 'fgep']:
-    if key not in ['p', 'w', '0w', '1w']:
+#    if key not in ['p', 'w', '0w', '1w']:
+    if len(key) >= 4:
       try:
         val = math.log(val)
       except:
@@ -116,10 +117,12 @@ def getTravatarFeatures(field):
   for strKeyVal in field.split():
     (key, val) = strKeyVal.split('=')
     val = record.getNumber(val)
-    if key in ['egfl', 'egfp', 'fgel', 'fgep']:
-      val = math.e ** val
-#    if key not in ['p', 'w']:
+#    if key in ['egfl', 'egfp', 'fgel', 'fgep']:
 #      val = math.e ** val
+#    if key[-1] not in ['p', 'w']:
+#      val = math.e ** val
+    if len(key) >= 4 :
+      val = math.e ** val
     features[key] = val
   return features
 

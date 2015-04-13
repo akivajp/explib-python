@@ -9,23 +9,50 @@ import io
 import os
 import os.path
 import re
+import subprocess
 
 from exp.common import debug
 import exp.common.progress
 
+PV = None
+if subprocess.call('which pv > /dev/null', shell=True) == 0:
+    PV = 'pv'
+
+env = os.environ
+env['LC_ALL'] = 'C'
+
 _open = open
 
 def autoCat(filenames, target):
-  '''ファイルの内容をコピーする。圧縮ファイルであれば展開する'''
-  if type(filenames) != list:
-    filenames = [filenames]
-  f_out = open(target, 'w')
-  for filename in filenames:
-    f_in = open(filename, 'r')
-    for line in f_in:
-      f_out.write(line)
-    f_in.close()
-  f_out.close()
+    '''ファイルの内容をコピーする。圧縮ファイルであれば展開する'''
+    if PV:
+        if type(filenames) != list:
+            filenames = [filenames]
+        f_out = _open(target, 'w')
+        if getExt(target) == '.gz':
+            cmd = '%s -WN copied | gzip' % (PV)
+            p_pv = subprocess.Popen(cmd, env=env, shell=True, stdin=subprocess.PIPE, stdout=f_out)
+        else:
+            cmd = '%s -WN copied' % (PV)
+            p_pv = subprocess.Popen(cmd, env=env, shell=True, stdin=subprocess.PIPE, stdout=f_out)
+        for filename in filenames:
+            f_in = open(filename, 'r')
+            for line in f_in:
+                p_pv.stdin.write(line)
+            f_in.close()
+        p_pv.stdin.close()
+        p_pv.communicate()
+        f_out.close()
+    else:
+        if type(filenames) != list:
+            filenames = [filenames]
+        f_out = open(target, 'w')
+        for filename in filenames:
+            f_in = open(filename, 'r')
+            for line in f_in:
+                f_out.write(line)
+            f_in.close()
+        f_out.close()
 
 def getContentSize(path):
   '''圧縮/非圧縮のファイルのサイズを透過的に調べる'''

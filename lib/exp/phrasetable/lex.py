@@ -19,12 +19,14 @@ stdout = codecs.getwriter('utf-8')(sys.stdout)
 pp = pprint.PrettyPrinter()
 
 #NBEST = 50
-NBEST = 10
+#NBEST = 10
+NBEST = 100
 
 # 整数近似判定に使う
 MARGIN = 0.0001
 
 # countmin/prodprob
+methods = ['countmin', 'prodprob', 'bidirmin', 'bidirgmean', 'bidirmax', 'bidiravr']
 METHOD = 'countmin'
 
 class PairCounter(object):
@@ -59,7 +61,6 @@ class PairCounter(object):
     def calcLexProb(self, srcWord, trgWord):
       coCount = self.pairCounts[(srcWord,trgWord)]
       if coCount == 0:
-#        return 1 / float(self.trgCounts["NULL"])
         if srcWord in self.srcCounts:
             return 1 / float(self.srcCounts[srcWord])
         else:
@@ -70,7 +71,6 @@ class PairCounter(object):
     def calcLexProbRev(self, srcWord, trgWord):
       coCount = self.pairCounts[(srcWord,trgWord)]
       if coCount == 0:
-#        return 1 / float(self.srcCounts["NULL"])
         if trgWord in self.trgCounts:
             return 1 / float(self.trgCounts[trgWord])
         else:
@@ -191,50 +191,61 @@ def pivotWordPairCounts(cntSrcPvt, cntPvtTrg, **options):
     cntSrcTrg = PairCounter()
     for srcWord in cntSrcPvt.srcCounts.keys():
         for pvtWord in cntSrcPvt.trgAligned[srcWord]:
-            if pvtWord == "NULL":
-                # NULL はピボットになれない
-                pass
-            else:
-                for trgWord in cntPvtTrg.trgAligned[pvtWord]:
-                    if srcWord == "NULL" and trgWord == "NULL":
-                        # NULL と NULL はアラインメントされない
-                        pass
+#            if False and pvtWord == "NULL":
+#                # NULL はピボットになれない
+#                pass
+#                continue
+#            if pvtWord == "NULL":
+#                count = cntSrcPvt.pairCounts[(srcWord,"NULL")]
+#                cntSrcTrg.addPair(srcWord, "NULL", count)
+            for trgWord in cntPvtTrg.trgAligned[pvtWord]:
+#                if pvtWord == "NULL":
+#                    count = cntPvtTrg.pairCounts[("NULL",trgWord)]
+#                    cntSrcTrg.addPair("NULL", trgWord, count)
+#                    continue
+                if srcWord == "NULL" and trgWord == "NULL":
+                    # NULL と NULL はアラインメントされない
+                    pass
+                else:
+                    coCount1 = cntSrcPvt.pairCounts[(srcWord,pvtWord)]
+                    coCount2 = cntPvtTrg.pairCounts[(pvtWord,trgWord)]
+                    srcCount1 = cntSrcPvt.srcCounts[srcWord]
+                    srcCount2 = cntPvtTrg.srcCounts[pvtWord]
+                    trgCount1 = cntSrcPvt.trgCounts[pvtWord]
+                    trgCount2 = cntPvtTrg.trgCounts[trgWord]
+                    if method == 'countmin':
+                        count1 = cntSrcPvt.pairCounts[(srcWord,pvtWord)]
+                        count2 = cntPvtTrg.pairCounts[(pvtWord,trgWord)]
+                        minCount = min(count1, count2)
+                        cntSrcTrg.addPair(srcWord, trgWord, minCount)
+                    elif method == 'prodprob':
+                        probSrcPvt = coCount1 / float(srcCount1)
+                        probPvtTrg = coCount2 / float(srcCount2)
+                        probSrcTrg = probSrcPvt * probPvtTrg
+                        coCount = srcCount1 * probSrcTrg
+                        cntSrcTrg.addPair(srcWord, trgWord, coCount)
+                    elif method == 'bidirmin':
+                        co1 = coCount1 * coCount2 / float(srcCount2)
+                        co2 = coCount2 * coCount1 / float(trgCount1)
+                        cntSrcTrg.addPair(srcWord, trgWord, min(co1,co2))
+                    elif method == 'bidirgmean':
+                        co1 = coCount1 * coCount2 / float(srcCount2)
+                        co2 = coCount2 * coCount1 / float(trgCount1)
+                        cntSrcTrg.addPair(srcWord, trgWord, math.sqrt(co1*co2))
+                    elif method == 'bidirmax':
+                        co1 = coCount1 * coCount2 / float(srcCount2)
+                        co2 = coCount2 * coCount1 / float(trgCount1)
+                        cntSrcTrg.addPair(srcWord, trgWord, max(co1,co2))
+                    elif method == 'bidiravr':
+                        co1 = coCount1 * coCount2 / float(srcCount2)
+                        co2 = coCount2 * coCount1 / float(trgCount1)
+                        cntSrcTrg.addPair(srcWord, trgWord, (co1 + co2) * 0.5)
                     else:
-                        coCount1 = cntSrcPvt.pairCounts[(srcWord,pvtWord)]
-                        coCount2 = cntPvtTrg.pairCounts[(pvtWord,trgWord)]
-                        srcCount1 = cntSrcPvt.srcCounts[srcWord]
-                        srcCount2 = cntPvtTrg.srcCounts[pvtWord]
-                        trgCount1 = cntSrcPvt.trgCounts[pvtWord]
-                        trgCount2 = cntPvtTrg.trgCounts[trgWord]
-                        if method == 'countmin':
-                            count1 = cntSrcPvt.pairCounts[(srcWord,pvtWord)]
-                            count2 = cntPvtTrg.pairCounts[(pvtWord,trgWord)]
-                            minCount = min(count1, count2)
-                            cntSrcTrg.addPair(srcWord, trgWord, minCount)
-                        elif method == 'prodprob':
-                            probSrcPvt = coCount1 / float(srcCount1)
-                            probPvtTrg = coCount2 / float(srcCount2)
-                            probSrcTrg = probSrcPvt * probPvtTrg
-                            coCount = srcCount1 * probSrcTrg
-                            cntSrcTrg.addPair(srcWord, trgWord, coCount)
-                        elif method == 'bidirmin':
-                            co1 = coCount1 * coCount2 / float(srcCount2)
-                            co2 = coCount2 * coCount1 / float(trgCount1)
-                            cntSrcTrg.addPair(srcWord, trgWord, min(co1,co2))
-                        elif method == 'bidirgmean':
-                            co1 = coCount1 * coCount2 / float(srcCount2)
-                            co2 = coCount2 * coCount1 / float(trgCount1)
-                            cntSrcTrg.addPair(srcWord, trgWord, math.sqrt(co1*co2))
-                        elif method == 'bidirmax':
-                            co1 = coCount1 * coCount2 / float(srcCount2)
-                            co2 = coCount2 * coCount1 / float(trgCount1)
-                            cntSrcTrg.addPair(srcWord, trgWord, max(co1,co2))
-                        else:
-                            assert False, "Invalid method: %s" % method
-                # ソース側で n-best だけ残す
-                if nbest > 0:
-                    if srcWord != "NULL":
-                        cntSrcTrg.filterNBestBySrc(nbest, srcWord)
+                        assert False, "Invalid method: %s" % method
+            # ソース側で n-best だけ残す
+            if nbest > 0:
+                if srcWord != "NULL":
+                    cntSrcTrg.filterNBestBySrc(nbest, srcWord)
     # ターゲット側で n-best だけ残す
     if nbest > 0:
         cntSrcTrg.filterNBestByTrg(nbest)

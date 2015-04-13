@@ -4,7 +4,9 @@
 '''フレーズテーブルのレコードを扱うクラス'''
 
 from exp.common import cache
+from exp.common import debug
 from exp.common import files
+from exp.common import number
 
 class CoOccurrence(object):
   def __init__(self, src = 0, trg = 0, co = 0):
@@ -35,9 +37,12 @@ class CoOccurrence(object):
 
   '''等価な整数にキャスト可能ならする'''
   def simplify(self, margin = 0):
-    self.src = getNumber(self.src, margin)
-    self.trg = getNumber(self.trg, margin)
-    self.co  = getNumber(self.co,  margin)
+#    self.src = getNumber(self.src, margin)
+    self.src = number.toNumber(self.src, margin)
+#    self.trg = getNumber(self.trg, margin)
+    self.trg = number.toNumber(self.trg, margin)
+#    self.co  = getNumber(self.co,  margin)
+    self.co  = number.toNumber(self.co,  margin)
 
   def __str__(self):
       name = self.__class__.__name__
@@ -50,7 +55,8 @@ class Record(object):
     self.trg = ""
     self.features = {}
     self.counts = CoOccurrence()
-    self.aligns = []
+#    self.aligns = []
+    self.aligns = set()
 
   def getAlignMap(self):
     return getAlignMap(self.aligns, reverse = False)
@@ -65,25 +71,22 @@ class Record(object):
     recRev.src = self.trg
     recRev.trg = self.src
     recRev.counts = self.counts.getReversed()
-    recRev.aligns = getRevAligns(self.aligns)
+#    debug.log(self.toStr())
+#    debug.log(self.aligns)
+#    recRev.aligns = getRevAligns(self.aligns)
+    recRev.aligns = getRevAlignSet(self.aligns)
     revFeatures = {}
     if 'egfp' in self.features:
       revFeatures[intern('fgep')] = self.features['egfp']
-#      revFeatures[cache.intern('fgep')] = self.features['egfp']
     if 'egfl' in self.features:
       revFeatures[intern('fgel')] = self.features['egfl']
-#      revFeatures[cache.intern('fgel')] = self.features['egfl']
     if 'fgep' in self.features:
       revFeatures[intern('egfp')] = self.features['fgep']
-#      revFeatures[cache.intern('egfp')] = self.features['fgep']
     if 'fgel' in self.features:
       revFeatures[intern('egfl')] = self.features['fgel']
-#      revFeatures[cache.intern('egfl')] = self.features['fgel']
     if 'p' in self.features:
       revFeatures[intern('p')] = self.features['p']
-#      revFeatures[cache.intern('p')] = self.features['p']
     revFeatures[intern('w')] = len(self.srcTerms)
-#    revFeatures[cache.intern('w')] = len(self.srcTerms)
     recRev.features = revFeatures
     return recRev
 
@@ -98,11 +101,10 @@ class MosesRecord(Record):
         if line:
             fields = line.strip().split(split)
             self.src = intern( fields[0].strip() )
-#            self.src = cache.intern( fields[0].strip() )
             self.trg = intern( fields[1].strip() )
-#            self.trg = cache.intern( fields[1].strip() )
             self.features = getMosesFeatures(fields[2])
-            self.aligns = fields[3].strip().split()
+#            self.aligns = fields[3].strip().split()
+            self.aligns = getAlignSet( fields[3] )
             listCounts = getCounts(fields[4])
             self.counts.setCounts(trg = listCounts[0], src = listCounts[1], co = listCounts[2])
 
@@ -124,11 +126,12 @@ class MosesRecord(Record):
 
     def toStr(self, s = ' ||| '):
         strFeatures = getStrMosesFeatures(self.features)
-        strAligns = str.join(' ', self.aligns)
+#        strAligns = str.join(' ', self.aligns)
+        strAligns = str.join(' ', sorted(self.aligns) )
         self.counts.simplify(0.0001)
         strCounts   = "%s %s %s" % (self.counts.trg, self.counts.src, self.counts.co)
-#        buf = str.join(s, [self.src, self.trg, strFeatures, strAligns, strCounts]) + "\n"
-        buf = str.join(s, [str(self.src), str(self.trg), strFeatures, strAligns, strCounts]) + "\n"
+        buf = str.join(s, [self.src, self.trg, strFeatures, strAligns, strCounts]) + "\n"
+#        buf = str.join(s, [str(self.src), str(self.trg), strFeatures, strAligns, strCounts]) + "\n"
         return buf
 
 
@@ -170,8 +173,12 @@ def getAlignMap(aligns, reverse = False):
       alignMap.setdefault(s, []).append(t)
   return alignMap
 
+def getAlignSet(strField):
+    return set(strField.strip().split())
+
 def getCounts(field):
-  return map(getNumber, field.split())
+#  return map(getNumber, field.split())
+  return map(number.toNumber, field.split())
 
 def getNumber(anyNum, margin = 0):
     numFloat = float(anyNum)
@@ -186,12 +193,17 @@ def getNumber(anyNum, margin = 0):
     else:
         return numFloat
 
-def getRevAligns(aligns):
-  revAlignList = []
+#def getRevAligns(aligns):
+def getRevAlignSet(aligns):
+#  revAlignList = []
+  revAlignSet = set()
+#  debug.log(aligns)
   for a in aligns:
     (s, t) = map(int, a.split('-'))
-    revAlignList.append( "%d-%d" % (t, s) )
-  return sorted(revAlignList)
+#    revAlignList.append( "%d-%d" % (t, s) )
+    revAlignSet.add( "%d-%d" % (t, s) )
+#  return sorted(revAlignList)
+  return sorted(revAlignSet)
 
 
 def getMosesFeatures(field):

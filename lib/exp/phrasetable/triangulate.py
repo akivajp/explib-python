@@ -25,18 +25,24 @@ from exp.phrasetable.reverse import reverseTable
 #THRESHOLD = 1e-3
 THRESHOLD = 0 # 打ち切りなし
 
+# 語彙翻訳確率の最小保証値
+MINPROB = 10 ** -10
+
 # フィルタリングで残す数
 NBEST = 20
 
+#PIVOT_QUEUE_SIZE = 2000
+PIVOT_QUEUE_SIZE = 1000
+
 # 翻訳確率の推定方法 counts/probs/counts+
 # 翻訳確率の推定方法 countmin/prod/bidirect
-methods = ['countmin', 'prodprob', 'prodprob', 'bidirmin', 'bidirgmean', 'bidirmax']
+methods = ['countmin', 'prodprob', 'prodprob', 'bidirmin', 'bidirgmean', 'bidirmax', 'bidiravr']
 #METHOD = 'counts'
 #METHOD = 'hybrid'
 METHOD = 'countmin'
 
 # 語彙翻訳確率の推定方法
-lexMethods = ['prodweight', 'countmin', 'prodprob', 'bidirmin', 'bidirgmean', 'bidirmax', 'table', 'countmin+table', 'prodprob+table', 'bidirmin+table', 'bidirgmean+table']
+lexMethods = ['prodweight', 'countmin', 'prodprob', 'bidirmin', 'bidirgmean', 'bidirmax', 'bidiravr', 'table', 'countmin+table', 'prodprob+table', 'bidirmin+table', 'bidirgmean+table']
 LEX_METHOD = 'prodweight'
 
 NULLS = 10**4
@@ -45,19 +51,23 @@ NOPREFILTER = False
 
 # ピボット時にターゲットレコードの検索履歴を残す件数
 #CACHESIZE = 1000
-CACHESIZE = 10000
+CACHESIZE = 3000
+#CACHESIZE = 5000 # メモリ20GBくらい喰う
+#CACHESIZE = 10000
 
 pp = pprint.PrettyPrinter()
 
 class WorkSet:
   '''マルチプロセス処理に必要な情報をまとめたもの'''
-  def __init__(self, savefile, workdir, method, RecordClass = MosesRecord, **options):
+#  def __init__(self, savefile, workdir, method, RecordClass = MosesRecord, **options):
+  def __init__(self, savefile, workdir, method, **options):
     prefix = options.get('prefix', 'phrase')
     self.multiTarget = options.get('multiTarget', False)
+    self.Record = options.get('RecordClass', MosesRecord)
     self.method = method
-    if method.find('multi') >= 0:
-        self.multiTarget = True
-        self.method = method.replace('multi','').replace('+','')
+#    if method.find('multi') >= 0:
+#        self.multiTarget = True
+#        self.method = method.replace('multi','').replace('+','')
     self.nbest = NBEST
     self.outQueue = multiprocessing.Queue()
     self.pivotCount = progress.Counter(scaleup = 1000)
@@ -65,7 +75,6 @@ class WorkSet:
     self.savePath = savefile
     self.threshold = THRESHOLD
     self.workdir = workdir
-    self.Record = RecordClass
 #    if method == 'prodprob':
 #        self.pivotPath = savefile
 #    if method in ('counts', 'hybrid'):
@@ -177,6 +186,12 @@ def updateCounts(recPivot, recPair, method):
         co1 = counts1.co * counts2.co / float(counts2.src)
         co2 = counts2.co * counts1.co / float(counts1.trg)
         counts.co += max(co1, co2)
+    elif method == 'bidiravr':
+        counts1 = recPair[0].counts
+        counts2 = recPair[1].counts
+        co1 = counts1.co * counts2.co / float(counts2.src)
+        co2 = counts2.co * counts1.co / float(counts1.trg)
+        counts.co += (co1 + co2) * 0.5
     elif method == 'prodprob':
         counts.src = recPair[0].counts.src
         counts.co  = counts.src * features['egfp']
@@ -190,17 +205,18 @@ def updateCounts(recPivot, recPair, method):
 
 def mergeAligns(recPivot, recPair):
   '''アラインメントのマージを試みる'''
-  if recPivot.aligns:
-    return
-  alignSet = set()
+#  if recPivot.aligns:
+#    return
+#  alignSet = set()
   alignMapSrcPvt = recPair[0].alignMap
   alignMapPvtTrg = recPair[1].alignMap
   for srcIndex, pvtIndices in alignMapSrcPvt.items():
     for pvtIndex in pvtIndices:
       for trgIndex in alignMapPvtTrg.get(pvtIndex, []):
         align = '%d-%d' % (srcIndex, trgIndex)
-        alignSet.add(align)
-  recPivot.aligns = sorted(alignSet)
+#        alignSet.add(align)
+        recPivot.aligns.add(align)
+#  recPivot.aligns = sorted(alignSet)
 
 
 def filterByCountRatioToMax(records, div = 100):
@@ -229,8 +245,10 @@ def calcPhraseTransProbsByCounts(records):
     #for rec in flattenRecords(records):
         counts = rec.counts
         counts.src = srcCount
-        rec.features['egfp'] = counts.co / float(srcCount)
-
+        if srcCount > 0:
+            rec.features['egfp'] = counts.co / float(srcCount)
+        else:
+            rec.features['egfp'] == 0
 
 
 def calcPhraseTransProbsOnTable(tablePath, savePath, **options):
@@ -249,7 +267,8 @@ def calcPhraseTransProbsOnTable(tablePath, savePath, **options):
             calcPhraseTransProbsByCounts(records)
             writeRecords(saveFile, records)
             records = {}
-        records[key] = rec
+        if rec.counts.co > 0:
+            records[key] = rec
         lastSrc = rec.src
     if records:
         calcPhraseTransProbsByCounts(records)
@@ -343,6 +362,8 @@ def pivotRecPairs(workset):
         mergeAligns(recPivot, recPair)
         if workset.multiTarget:
             updateFeatures(recMulti, recPair, workset.method, multiTarget = True)
+            updateCounts(recMulti, recPair, workset.method)
+            mergeAligns(recMulti, recPair)
     # この時点で1つの原言語フレーズと、対応する目的言語フレーズが確定する
     if workset.multiTarget:
         # マルチターゲットレコードに通常のピボットレコードのスコアを適用
@@ -377,22 +398,37 @@ def pivotRecPairs(workset):
                 ignoring.append(pair)
         for key in ignoring:
             del records[key]
-    if workset.multiTarget:
-        records = multiRecords
     # n-best が設定されている場合は順方向の翻訳確率でソートしてフィルタリング
     if workset.nbest > 0:
         if len(records) > workset.nbest:
             scores = []
             for key, rec in records.items():
-                if workset.multiTarget:
-                    scores.append( (rec.features['1egfp'],key) )
-                else:
-                    scores.append( (rec.features['egfp'],key) )
+                scores.append( (rec.features['egfp'],key) )
             scores.sort(reverse = True)
             bestRecords = {}
             for _, key in scores[:workset.nbest]:
                 bestRecords[key] = records[key]
             records = bestRecords
+        if workset.multiTarget:
+            if len(multiRecords) > workset.nbest:
+                # 先に通常の src-trg レコードのn-bestに含まれる src-pvt-trgのみ残す
+                bestRecords = {}
+                for multiKey, recMulti in multiRecords.items():
+                    for rec in records.values():
+                        if multiKey.find(rec.trg + ' |COL|') == 0:
+                            bestRecords[multiKey] = recMulti
+                multiRecords = bestRecords
+                # 次にegfpで n-best を残す
+                scores = []
+                for multiKey, recMulti in multiRecords.items():
+                    scores.append( (recMulti.features['egfp'],multiKey) )
+                scores.sort(reverse = True)
+                bestRecords = {}
+                for _, multiKey in scores[None:workset.nbest]:
+                    bestRecords[multiKey] = multiRecords[multiKey]
+                multiRecords = bestRecords
+    if workset.multiTarget:
+        records = multiRecords
     # レコードをキューに追加して、別プロセスに書き込んでもらう
     if records:
       workset.pivotCount.add( len(records) )
@@ -410,7 +446,8 @@ def pivotRecPairs(workset):
 def writeRecords(fileObj, records):
 #  for rec in flattenRecords(records):
   for rec in flattenRecords(records, sort = True):
-      fileObj.write( rec.toStr() )
+      if rec.counts.co > 0:
+          fileObj.write( rec.toStr() )
 
 
 def writeRecordQueue(workset):
@@ -419,49 +456,53 @@ def writeRecordQueue(workset):
   while True:
     rec = workset.outQueue.get()
     if rec == None:
-      # Mone を受け取ったらループ終了
-      break
-    pivotFile.write( rec.toStr() )
+        # Mone を受け取ったらループ終了
+        break
+    if rec.counts.co > 0:
+        pivotFile.write( rec.toStr() )
   pivotFile.close()
 
 
 class PivotFinder:
-  def __init__(self, table1, table2, index1, index2, RecordClass = MosesRecord):
-    self.srcFile = files.open(table1, 'r')
-    self.trgFile = files.open(table2, 'r')
-    self.srcIndices = findutil.loadIndices(index1)
-    self.trgIndices = findutil.loadIndices(index2)
-    self.srcCount = progress.Counter(scaleup = 1000)
-    self.rows = []
-    self.rowsCache = cache.Cache(size = CACHESIZE)
-    self.Record = RecordClass
+    def __init__(self, table1, table2, index1, index2, RecordClass = MosesRecord):
+        self.srcFile = files.open(table1, 'r')
+        self.trgFile = files.open(table2, 'r')
+        self.srcIndices = findutil.loadIndices(index1)
+        self.trgIndices = findutil.loadIndices(index2)
+        self.srcCount = progress.Counter(scaleup = 1000)
+        self.rows = []
+        self.rowsCache = cache.Cache(size = CACHESIZE)
+        self.Record = RecordClass
 
-  def getRow(self):
-    if self.rows == None:
-      return None
-    while len(self.rows) == 0:
-      line = self.srcFile.readline()
-      self.srcCount.add()
-      if not line:
-        self.rows = None
-        return None
-      self.makePivot(line)
-    return self.rows.pop(0)
+    def getRow(self):
+        if self.rows == None:
+            return None
+        while len(self.rows) == 0:
+            line = self.srcFile.readline()
+            self.srcCount.add()
+            if not line:
+                self.rows = None
+                return None
+            self.makePivot(line)
+        return self.rows.pop(0)
 
-  def makePivot(self, srcLine):
-    recSrc = self.Record(srcLine)
-    pivotPhrase = recSrc.trg
+    def makePivot(self, srcLine):
+        recSrc = self.Record(srcLine)
+        pivotPhrase = recSrc.trg
+        if pivotPhrase in self.rowsCache:
+            trgLines = self.rowsCache[pivotPhrase]
+            self.rowsCache.use(pivotPhrase)
+        else:
+            trgLines = findutil.searchIndexed(self.trgFile, self.trgIndices, pivotPhrase)
+            self.rowsCache[pivotPhrase] = trgLines
+        for trgLine in trgLines:
+            recTrg = self.Record(trgLine)
+            self.rows.append( [recSrc, recTrg] )
 
-    if pivotPhrase in self.rowsCache:
-      trgLines = self.rowsCache[pivotPhrase]
-      self.rowsCache.use(pivotPhrase)
-    else:
-      trgLines = findutil.searchIndexed(self.trgFile, self.trgIndices, pivotPhrase)
-      self.rowsCache[pivotPhrase] = trgLines
-    for trgLine in trgLines:
-      recTrg = self.Record(trgLine)
-      self.rows.append( [recSrc, recTrg] )
-
+    def close(self):
+        self.srcFile.close()
+        self.trgFile.close()
+        self.rowsCache = None
 
 def calcLexWeight(rec, lexCounts, reverse = False):
 #  minProb = 10 ** -2
@@ -478,6 +519,7 @@ def calcLexWeight(rec, lexCounts, reverse = False):
     alignMap = rec.alignMap
     srcTerms = rec.trgTerms
     trgTerms = rec.srcTerms
+  minProb = MINPROB
   for trgIndex in range(len(trgTerms)):
     trgTerm = trgTerms[trgIndex]
     if trgIndex in alignMap:
@@ -485,20 +527,24 @@ def calcLexWeight(rec, lexCounts, reverse = False):
       srcIndices = alignMap[trgIndex]
       for srcIndex in srcIndices:
         srcTerm = srcTerms[srcIndex]
-#        pair = (srcTerm, trgTerm)
-#        lexProb = lexProbs.get(pair, minProb)
         if not reverse:
           lexProb = lexCounts.calcLexProb(srcTerm, trgTerm)
         else:
           lexProb = lexCounts.calcLexProbRev(trgTerm, srcTerm)
         trgSumProb += lexProb
-      lexWeight *= (trgSumProb / len(srcIndices))
-    else:
-#      lexWeight *= minProb
-      if not reverse:
-        lexWeight *= lexCounts.calcLexProb("NULL", trgTerm)
+      if type(rec) == MosesRecord:
+          trgProb = trgSumProb / len(srcIndices)
       else:
-        lexWeight *= lexCounts.calcLexProb(trgTerm, "NULL")
+          trgProb = trgSumProb / (len(srcIndices) + 1)
+#      lexWeight *= (trgSumProb / len(srcIndices))
+    else:
+      if not reverse:
+#        lexWeight *= lexCounts.calcLexProb("NULL", trgTerm)
+        trgProb = lexCounts.calcLexProb("NULL", trgTerm)
+      else:
+#        lexWeight *= lexCounts.calcLexProb(trgTerm, "NULL")
+        trgProb = lexCounts.calcLexProb(trgTerm, "NULL")
+    lexWeight *= max(trgProb, minProb)
   return lexWeight
 
 def calcLexWeights(tablePath, lexCounts, savePath, RecordClass = MosesRecord):
@@ -506,10 +552,14 @@ def calcLexWeights(tablePath, lexCounts, savePath, RecordClass = MosesRecord):
   saveFile  = files.open(savePath, 'w')
   for line in tableFile:
     rec = RecordClass(line)
-#    rec.features['egfl'] = calcLexWeight(rec, lexCounts)
-    rec.features['egfl'] = calcLexWeight(rec, lexCounts, reverse = False)
-    rec.features['fgel'] = calcLexWeight(rec, lexCounts, reverse = True)
-    saveFile.write( rec.toStr() )
+    if rec.trg.find('|COL') < 0:
+        rec.features['egfl'] = calcLexWeight(rec, lexCounts, reverse = False)
+        rec.features['fgel'] = calcLexWeight(rec, lexCounts, reverse = True)
+        saveFile.write( rec.toStr() )
+    else:
+        rec.features['0egfl'] = calcLexWeight(rec, lexCounts, reverse = False)
+        rec.features['0fgel'] = calcLexWeight(rec, lexCounts, reverse = True)
+        saveFile.write( rec.toStr() )
   saveFile.close()
   tableFile.close()
 
@@ -526,7 +576,7 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
     method    = options.get('method', METHOD)
     lexMethod = options.get('lexmethod', LEX_METHOD)
     numNulls  = options.get('nulls', NULLS)
-#    multiTarget = options.get('multitarget', False)
+    multiTarget = options.get('multitarget', False)
 
     if lexMethod not in ('prodweight', 'table'):
         if alignLexPath == None:
@@ -559,7 +609,12 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
     progress.log("making index: %s\n" % trgIndex)
     findutil.saveIndices(trgWorkTable, trgIndex)
     # ワークセットの作成
-    workset = WorkSet(savefile, workdir, method, RecordClass = RecordClass, prefix = prefix)
+    workOptions = {}
+    workOptions['RecordClass'] = RecordClass
+    workOptions['prefix'] = prefix
+    workOptions['multiTarget'] = multiTarget
+#    workset = WorkSet(savefile, workdir, method, RecordClass = RecordClass, prefix = prefix)
+    workset = WorkSet(savefile, workdir, method, **workOptions)
     workset.threshold = threshold
     workset.nbest = nbest
     # ワークセットの起動
@@ -571,7 +626,7 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
     rowCount = 0
     progress.log("beginning pivot\n")
     while True:
-      if workset.pivotQueue.qsize() > 2000:
+      if workset.pivotQueue.qsize() > PIVOT_QUEUE_SIZE:
         time.sleep(1)
       row = finder.getRow()
       if not row:
@@ -600,6 +655,7 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
     progress.log("source: %d (100%%), processed: %d, pivot %d  \n" %
                  (finder.srcCount.count, rowCount, workset.pivotCount.count) )
     # ワークセットを片付ける
+    finder.close()
     workset.close()
 
     # 必要な単語対カウントファイルを読み込む
@@ -616,10 +672,10 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
                 lexCounts.srcCounts["NULL"] = numNulls
                 lexCounts.trgCounts["NULL"] = numNulls
         else:
-            progress.log("loading aligned lex: %s\n", alignLexPath)
+            progress.log("loading aligned lex: %s\n" % alignLexPath)
             lexCounts = lex.loadWordPairCounts(alignLexPath)
 #    if workset.method == 'countmin':
-    if method in ['countmin', 'bidirmin', 'bidirgmean', 'bidirmax']:
+    if method in ['countmin', 'bidirmin', 'bidirgmean', 'bidirmax', 'bidiravr']:
   #      # 単語単位の翻訳確率をロードする
   #      #progress.log("loading word trans probabilities\n")
   #      #lexCounts = lex.loadWordPairCounts(lexPath)
@@ -663,9 +719,9 @@ def pivot(table1, table2, savefile="phrase-table.gz", workdir=".", **options):
         else:
             progress.log("gzipping into: %s\n" % workset.savePath)
             files.autoCat(workset.pivotPath, workset.savePath)
-    elif method == 'multi':
-            progress.log("gzipping into: %s\n" % workset.savePath)
-            files.autoCat(workset.pivotPath, workset.savePath)
+#    elif method == 'multi':
+#            progress.log("gzipping into: %s\n" % workset.savePath)
+#            files.autoCat(workset.pivotPath, workset.savePath)
     else:
         assert False, "Invalid method: %s" % method
   except KeyboardInterrupt:

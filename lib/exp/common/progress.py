@@ -4,6 +4,7 @@
 '''処理途中の内容をコンソールに動的に書き換える'''
 
 import codecs
+import os
 import sys
 import time
 

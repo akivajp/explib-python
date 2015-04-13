@@ -22,12 +22,13 @@ NBEST = 20
 NULLS = 10**4
 
 # 翻訳確率の推定方法 counts/probs
-methods = ['countmin', 'prodprob', 'bidirmin', 'bidirgmean', 'prodprob+multi']
+methods = base.methods
 METHOD = 'countmin'
 
 # 語彙翻訳確率の推定方法
-lexMethods = ['prodweight', 'countmin', 'prodprob', 'bidirmin', 'bidirmax', 'bidirgmean','table',
-              'countmin+table', 'prodprob+table', 'bidirmin+table', 'bidirgmean+table', 'bidirmax+table']
+#lexMethods = ['prodweight', 'countmin', 'prodprob', 'bidirmin', 'bidirmax', 'bidirgmean','table',
+#              'countmin+table', 'prodprob+table', 'bidirmin+table', 'bidirgmean+table', 'bidirmax+table']
+lexMethods = base.lexMethods
 LEX_METHOD = 'prodweight'
 
 def main():
