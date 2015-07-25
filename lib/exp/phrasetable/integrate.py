@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''同じ言語対を扱う2つのフレーズテーブルを新しく1つのフレーズテーブルに合成する．'''
+'''function integrating 2 phrase tables having the same language pairs into 1 table'''
 
 import argparse
 import codecs
@@ -23,10 +23,10 @@ from exp.phrasetable.record import MosesRecord
 from exp.phrasetable.record import RecordReader
 from exp.phrasetable.reverse import reverseTable
 
-# フィルタリングで残す数
+# limit number of records for the same source phrase
 NBEST = 20
 
-# 翻訳確率の推定方法 counts/probs
+# methods to estiamte translation probs (count/interpolate)
 methods = ['count', 'interpolate']
 METHOD = 'count'
 
@@ -124,87 +124,87 @@ def mergeRecords(*recListList, **options):
 
 
 def integrate(table1, table2, savefile, **options):
-  # オプション初期値の設定
-  RecordClass = options.get('RecordClass', MosesRecord)
-  prefix = options.get('prefix', 'phrase')
-  nbest     = options.get('nbest', NBEST)
-  workdir   = options.get('workdir', '.')
-  lexPath   = options.get('lexfile', None)
-  method    = options.get('method', METHOD)
-  lexMethod = options.get('lexmethod', LEX_METHOD)
+    # initial values of the optiones
+    RecordClass = options.get('RecordClass', MosesRecord)
+    prefix = options.get('prefix', 'phrase')
+    nbest     = options.get('nbest', NBEST)
+    workdir   = options.get('workdir', '.')
+    lexPath   = options.get('lexfile', None)
+    method    = options.get('method', METHOD)
+    lexMethod = options.get('lexmethod', LEX_METHOD)
 
-  if lexMethod not in ('interpolate'):
-      if lexPath == None:
-          debug.log(lexMethod)
-          assert False, "aligned lexfile is not given"
+    if lexMethod not in ('interpolate'):
+        if lexPath == None:
+            debug.log(lexMethod)
+            assert False, "aligned lexfile is not given"
 
-  # 作業ディレクトリの作成
-  workdir = workdir + '/integrate'
-  files.mkdir(workdir)
-  mergePath = "%s/%s_merged" % (workdir, prefix)
-  revPath   = "%s/%s_reversed" % (workdir, prefix)
-  trgCountPath = "%s/%s_trg" % (workdir, prefix)
-  revTrgCountPath = "%s/%s_trgrev" % (workdir, prefix)
-  countPath = "%s/%s_pprob" % (workdir, prefix)
-  # 共起回数を足しあわせながらマージする
-  progress.log("merging records into: %s\n" % mergePath)
-  integrateTablePair(table1, table2, mergePath, **options)
-  progress.log("merged table\n")
-#  # 単語単位の翻訳確率をロードする
-#  progress.log("loading word trans probabilities\n")
-#  lexCounts = lex.loadWordPairCounts(lexfile)
-  # テーブルを逆転させる
-  if method == 'count':
-      progress.log("reversing %s table into: %s\n" % (prefix, revPath) )
-      reverseTable(mergePath, revPath, RecordClass)
-      progress.log("reversed table\n")
-      # 逆転したテーブルで逆方向のフレーズ翻訳確率を求める
-      progress.log("calculating reversed phrase trans probs into: %s\n" % (trgCountPath))
-      triangulate.calcPhraseTransProbsOnTable(revPath, trgCountPath, RecordClass = RecordClass)
-      progress.log("calculated reversed phrase trans probs\n")
-      # 再度テーブルを反転して元に戻す
-      progress.log("reversing %s table into: %s\n" % (prefix,revTrgCountPath))
-      reverseTable(trgCountPath, revTrgCountPath, RecordClass)
-      progress.log("reversed table\n")
-      # 順方向の翻訳確率を求める
-      progress.log("calculating phrase trans probs into: %s\n" % (countPath))
-      triangulate.calcPhraseTransProbsOnTable(revTrgCountPath, countPath, RecordClass = RecordClass)
-    #  triangulate.calcPhraseTransProbsOnTable(revTrgCountPath, savefile, nbest = 0, RecordClass = RecordClass)
-      progress.log("calculated phrase trans probs\n")
-      if lexMethod == 'interpolate':
-          progress.log("gzipping into: %s\n" % savefile)
-          files.autoCat(countPath, savefile)
-      else:
-          # 語彙化翻訳確率を求める
-          progress.log("calculating lex weights into: %s\n" % workset.savePath)
-          calcLexWeights(countPath, lexCounts, savefile, RecordClass)
-          progress.log("calculated lex weights\n")
-  elif method == 'interpolate':
-      if lexMethod == 'interpolate':
-          progress.log("gzipping into: %s\n" % savefile)
-          files.autoCat(mergePath, savefile)
-  else:
-      assert False, "Invalid method: %s" % method
-#  # 語彙化翻訳確率を求める
-#  progress.log("calculating lex weights into: %s\n" % savefile)
-#  triangulate.calcLexWeights(countPath, lexCounts, savefile, RecordClass)
-#  progress.log("calculated lex weights\n")
+    # making work directory
+    workdir = workdir + '/integrate'
+    files.mkdir(workdir)
+    mergePath = "%s/%s_merged" % (workdir, prefix)
+    revPath   = "%s/%s_reversed" % (workdir, prefix)
+    trgCountPath = "%s/%s_trg" % (workdir, prefix)
+    revTrgCountPath = "%s/%s_trgrev" % (workdir, prefix)
+    countPath = "%s/%s_pprob" % (workdir, prefix)
+    # merging by summing co-occurrence counts
+    progress.log("merging records into: %s\n" % mergePath)
+    integrateTablePair(table1, table2, mergePath, **options)
+    progress.log("merged table\n")
+#    # load word translation probabilities
+#    progress.log("loading word trans probabilities\n")
+#    lexCounts = lex.loadWordPairCounts(lexfile)
+    # reversing the table
+    if method == 'count':
+        progress.log("reversing %s table into: %s\n" % (prefix, revPath) )
+        reverseTable(mergePath, revPath, RecordClass)
+        progress.log("reversed table\n")
+        # estimate backward trans probs for reversed table
+        progress.log("calculating reversed phrase trans probs into: %s\n" % (trgCountPath))
+        triangulate.calcPhraseTransProbsOnTable(revPath, trgCountPath, RecordClass = RecordClass)
+        progress.log("calculated reversed phrase trans probs\n")
+        # reversing the table again
+        progress.log("reversing %s table into: %s\n" % (prefix,revTrgCountPath))
+        reverseTable(trgCountPath, revTrgCountPath, RecordClass)
+        progress.log("reversed table\n")
+        # estimate forward trans probs
+        progress.log("calculating phrase trans probs into: %s\n" % (countPath))
+        triangulate.calcPhraseTransProbsOnTable(revTrgCountPath, countPath, RecordClass = RecordClass)
+      #  triangulate.calcPhraseTransProbsOnTable(revTrgCountPath, savefile, nbest = 0, RecordClass = RecordClass)
+        progress.log("calculated phrase trans probs\n")
+        if lexMethod == 'interpolate':
+            progress.log("gzipping into: %s\n" % savefile)
+            files.autoCat(countPath, savefile)
+        else:
+            # estimate lexicalized trans probs
+            progress.log("calculating lex weights into: %s\n" % workset.savePath)
+            calcLexWeights(countPath, lexCounts, savefile, RecordClass)
+            progress.log("calculated lex weights\n")
+    elif method == 'interpolate':
+        if lexMethod == 'interpolate':
+            progress.log("gzipping into: %s\n" % savefile)
+            files.autoCat(mergePath, savefile)
+    else:
+        assert False, "Invalid method: %s" % method
+#    # extimate lexicalized trans probs
+#    progress.log("calculating lex weights into: %s\n" % savefile)
+#    triangulate.calcLexWeights(countPath, lexCounts, savefile, RecordClass)
+#    progress.log("calculated lex weights\n")
 
 
 def main():
-  parser = argparse.ArgumentParser(description = 'load 2 phrase tables and pivot into one moses phrase table')
-  parser.add_argument('table1', help = 'phrase table 1')
-  parser.add_argument('table2', help = 'phrase table 2')
-  parser.add_argument('savefile', help = 'path for saving moses phrase table file')
-  parser.add_argument('--nbest', help = 'best n scores for phrase pair filtering (default = 20)', type=int, default=NBEST)
-  parser.add_argument('--workdir', help = 'working directory', default='.')
-  parser.add_argument('--lexfile', help = 'word pair counts file', default=None)
-  parser.add_argument('--method', help = 'triangulation method', choices=methods, default=METHOD)
-  parser.add_argument('--lexmethod', help = 'lexical triangulation method', choices=lexMethods, default=LEX_METHOD)
-  args = vars(parser.parse_args())
+    parser = argparse.ArgumentParser(description = 'load 2 phrase tables and pivot into one moses phrase table')
+    parser.add_argument('table1', help = 'phrase table 1')
+    parser.add_argument('table2', help = 'phrase table 2')
+    parser.add_argument('savefile', help = 'path for saving moses phrase table file')
+    parser.add_argument('--nbest', help = 'best n scores for phrase pair filtering (default = 20)', type=int, default=NBEST)
+    parser.add_argument('--workdir', help = 'working directory', default='.')
+    parser.add_argument('--lexfile', help = 'word pair counts file', default=None)
+    parser.add_argument('--method', help = 'triangulation method', choices=methods, default=METHOD)
+    parser.add_argument('--lexmethod', help = 'lexical triangulation method', choices=lexMethods, default=LEX_METHOD)
+    args = vars(parser.parse_args())
 
-  integrate(**args)
+    integrate(**args)
 
 if __name__ == '__main__':
-  main()
+    main()
 

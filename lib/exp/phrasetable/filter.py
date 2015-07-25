@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''フレーズテーブルのフィルタリングを行う'''
+'''phrase table filtering function'''
 
 import argparse
 import os

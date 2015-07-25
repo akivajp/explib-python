@@ -15,16 +15,16 @@ from exp.phrasetable import lex
 
 #def pivot_lex(lexfile1, lexfile2, savefile, nbest = NBEST):
 def pivot_lex(lexfile1, lexfile2, savefile, **options):
-  method = options.get('method', 'count')
-  if method == 'count':
-      nbest = options.get('nbest', NBEST_COUNT)
-  else:
-      nbest = options.get('nbest', NBEST)
-  cntSrcPvt = lex.loadWordPairCounts(lexfile1)
-  cntPvtTrg = lex.loadWordPairCounts(lexfile2)
-#  cntSrcTrg = lex.pivotWordPairCounts(cntSrcPvt, cntPvtTrg, nbest = nbest)
-  cntSrcTrg = lex.pivotWordPairCounts(cntSrcPvt, cntPvtTrg, **options)
-  lex.saveWordPairCounts(savefile, cntSrcTrg)
+    method = options.get('method', 'count')
+    if method == 'count':
+        nbest = options.get('nbest', NBEST_COUNT)
+    else:
+        nbest = options.get('nbest', NBEST)
+    cntSrcPvt = lex.loadWordPairCounts(lexfile1)
+    cntPvtTrg = lex.loadWordPairCounts(lexfile2)
+#    cntSrcTrg = lex.pivotWordPairCounts(cntSrcPvt, cntPvtTrg, nbest = nbest)
+    cntSrcTrg = lex.pivotWordPairCounts(cntSrcPvt, cntPvtTrg, **options)
+    lex.saveWordPairCounts(savefile, cntSrcTrg)
 
 def main():
     parser = argparse.ArgumentParser(description = 'triangulate lex files by co-occurrence counts estimation')

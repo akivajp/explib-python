@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''キャッシュ機能を実現するクラス群'''
+'''classes providing cache functions'''
 
 import weakref
 from collections import OrderedDict
 
 DEFAULT_CACHE_SIZE = 100
 
-'''任意の件数のデータを保持し、最後に使われたデータから削除していく辞書クラス'''
+'''dictionary class holding only least N records'''
 class Cache(OrderedDict):
     def __init__(self, items = [], size = None):
         if not isinstance(size, int):
@@ -50,7 +50,7 @@ class Cache(OrderedDict):
     size = property(__getsize,__resize)
 
 
-#'''同じ値を持つオブジェクトに対して同一のIDを持つオブジェクトを返す枠組みを提供するクラス'''
+#'''class providing a framework to return the same ID for an object with the same value'''
 #class InternCache(object):
 #    def __init__(self, size = 0):
 #        self.cache = Cache(size = size)
@@ -105,7 +105,6 @@ class ObjectHold(object):
 
     def __str__(self):
         return str(self.o)
-
 
 
 __internDict = weakref.WeakValueDictionary()

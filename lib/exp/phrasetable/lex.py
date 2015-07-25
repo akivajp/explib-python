@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''語彙翻訳テーブル操作'''
+'''functions for controlling the word translation table'''
 
 import codecs
 import math
@@ -22,61 +22,61 @@ pp = pprint.PrettyPrinter()
 #NBEST = 10
 NBEST = 100
 
-# 整数近似判定に使う
+# for integer approximation
 MARGIN = 0.0001
 
-# countmin/prodprob
+# countmin/prodprob/bidirmin/bidirgmean/bidirmax/bidiravr
 methods = ['countmin', 'prodprob', 'bidirmin', 'bidirgmean', 'bidirmax', 'bidiravr']
 METHOD = 'countmin'
 
 class PairCounter(object):
     def __init__(self):
-      self.srcCounts  = defaultdict(int)
-      self.trgCounts  = defaultdict(int)
-      self.pairCounts  = defaultdict(int)
-      self.srcAligned  = defaultdict(set)
-      self.trgAligned  = defaultdict(set)
+        self.srcCounts  = defaultdict(int)
+        self.trgCounts  = defaultdict(int)
+        self.pairCounts  = defaultdict(int)
+        self.srcAligned  = defaultdict(set)
+        self.trgAligned  = defaultdict(set)
 
     def addSrc(self, word, count = 1):
-      self.srcCounts[word] += count
+        self.srcCounts[word] += count
     def setSrc(self, word, count):
-      self.srcCounts[word] = count
+        self.srcCounts[word] = count
 
     def addTrg(self, word, count = 1):
-      self.trgCounts[word] += count
+        self.trgCounts[word] += count
     def setTrg(self, word, count):
-      self.trgCounts[word] = count
+        self.trgCounts[word] = count
 
     def addPair(self, srcWord, trgWord, count = 1):
-      self.pairCounts[(srcWord, trgWord)] += count
-      self.srcAligned[trgWord].add(srcWord)
-      self.trgAligned[srcWord].add(trgWord)
-      self.addSrc(srcWord, count)
-      self.addTrg(trgWord, count)
+        self.pairCounts[(srcWord, trgWord)] += count
+        self.srcAligned[trgWord].add(srcWord)
+        self.trgAligned[srcWord].add(trgWord)
+        self.addSrc(srcWord, count)
+        self.addTrg(trgWord, count)
 
     def addNull(self, count = 1):
-      self.addSrc(intern("NULL"),count)
-      self.addTrg(intern("NULL"),count)
+        self.addSrc(intern("NULL"),count)
+        self.addTrg(intern("NULL"),count)
 
     def calcLexProb(self, srcWord, trgWord):
-      coCount = self.pairCounts[(srcWord,trgWord)]
-      if coCount == 0:
-        if srcWord in self.srcCounts:
-            return 1 / float(self.srcCounts[srcWord])
+        coCount = self.pairCounts[(srcWord,trgWord)]
+        if coCount == 0:
+            if srcWord in self.srcCounts:
+                return 1 / float(self.srcCounts[srcWord])
+            else:
+                return 0
         else:
-            return 0
-      else:
-        return coCount / float(self.srcCounts[srcWord])
+            return coCount / float(self.srcCounts[srcWord])
 
     def calcLexProbRev(self, srcWord, trgWord):
-      coCount = self.pairCounts[(srcWord,trgWord)]
-      if coCount == 0:
-        if trgWord in self.trgCounts:
-            return 1 / float(self.trgCounts[trgWord])
+        coCount = self.pairCounts[(srcWord,trgWord)]
+        if coCount == 0:
+            if trgWord in self.trgCounts:
+                return 1 / float(self.trgCounts[trgWord])
+            else:
+                return 0
         else:
-            return 0
-      else:
-        return coCount / float(self.trgCounts[trgWord])
+            return coCount / float(self.trgCounts[trgWord])
 
     def delPair(self, srcWord, trgWord):
         if (srcWord, trgWord) in self.pairCounts:
@@ -104,7 +104,6 @@ class PairCounter(object):
                     if srcWord != "NULL":
                         self.filterNBestBySrc(nbest, srcWord)
 
-
     def filterNBestByTrg(self, nbest = NBEST, trgWord = None):
         if nbest > 0:
             scores = []
@@ -130,7 +129,7 @@ def calcWordPairCountsByAligns(srcTextPath, trgTextPath, alignPath):
         trgLine = trgTextFile.readline()
         alignLine = alignFile.readline()
         if srcLine == "":
-          break
+            break
         srcWords = srcLine.strip().split(' ')
         trgWords = trgLine.strip().split(' ')
         alignList = alignLine.strip().split(' ')
@@ -142,18 +141,18 @@ def calcWordPairCountsByAligns(srcTextPath, trgTextPath, alignPath):
         srcAlignedIndices = set()
         trgAlignedIndices = set()
         for align in alignList:
-          (srcIndex, trgIndex) = map(int, align.split('-'))
-          srcWord = srcWords[srcIndex]
-          trgWord = trgWords[trgIndex]
-          pairCounter.addPair(srcWord, trgWord)
-          srcAlignedIndices.add( srcIndex )
-          trgAlignedIndices.add( trgIndex )
+            (srcIndex, trgIndex) = map(int, align.split('-'))
+            srcWord = srcWords[srcIndex]
+            trgWord = trgWords[trgIndex]
+            pairCounter.addPair(srcWord, trgWord)
+            srcAlignedIndices.add( srcIndex )
+            trgAlignedIndices.add( trgIndex )
         for i, srcWord in enumerate(srcWords):
-          if not i in srcAlignedIndices:
-            pairCounter.addPair(srcWord, "NULL")
+            if not i in srcAlignedIndices:
+                pairCounter.addPair(srcWord, "NULL")
         for i, trgWord in enumerate(trgWords):
-          if not i in trgAlignedIndices:
-            pairCounter.addPair("NULL", trgWord)
+            if not i in trgAlignedIndices:
+                pairCounter.addPair("NULL", trgWord)
     return pairCounter
 
 
@@ -172,17 +171,17 @@ def saveWordPairCounts(savePath, pairCounter):
 
 
 def loadWordPairCounts(lexPath):
-  lexFile = files.open(lexPath, 'r')
-  pairCounter = PairCounter()
-  for line in lexFile:
-    fields = line.split()
-    srcWord = intern( fields[0] )
-    trgWord = intern( fields[1] )
-#    pairCounter.addPair(srcWord, trgWord, int(fields[2]))
-    pairCounter.addPair(srcWord, trgWord, number.toNumber(fields[2]))
-#    pairCounter.setSrc(srcWord, number.toNumber(fields[3]))
-#    pairCounter.setTrg(trgWord, number.toNumber(fields[4]))
-  return pairCounter
+    lexFile = files.open(lexPath, 'r')
+    pairCounter = PairCounter()
+    for line in lexFile:
+      fields = line.split()
+      srcWord = intern( fields[0] )
+      trgWord = intern( fields[1] )
+#      pairCounter.addPair(srcWord, trgWord, int(fields[2]))
+      pairCounter.addPair(srcWord, trgWord, number.toNumber(fields[2]))
+#      pairCounter.setSrc(srcWord, number.toNumber(fields[3]))
+#      pairCounter.setTrg(trgWord, number.toNumber(fields[4]))
+    return pairCounter
 
 
 def pivotWordPairCounts(cntSrcPvt, cntPvtTrg, **options):
@@ -192,7 +191,7 @@ def pivotWordPairCounts(cntSrcPvt, cntPvtTrg, **options):
     for srcWord in cntSrcPvt.srcCounts.keys():
         for pvtWord in cntSrcPvt.trgAligned[srcWord]:
 #            if False and pvtWord == "NULL":
-#                # NULL はピボットになれない
+#                # NULL can't be a pivot
 #                pass
 #                continue
 #            if pvtWord == "NULL":
@@ -204,7 +203,7 @@ def pivotWordPairCounts(cntSrcPvt, cntPvtTrg, **options):
 #                    cntSrcTrg.addPair("NULL", trgWord, count)
 #                    continue
                 if srcWord == "NULL" and trgWord == "NULL":
-                    # NULL と NULL はアラインメントされない
+                    # NULL-NULL are not aligned.
                     pass
                 else:
                     coCount1 = cntSrcPvt.pairCounts[(srcWord,pvtWord)]
@@ -242,11 +241,11 @@ def pivotWordPairCounts(cntSrcPvt, cntPvtTrg, **options):
                         cntSrcTrg.addPair(srcWord, trgWord, (co1 + co2) * 0.5)
                     else:
                         assert False, "Invalid method: %s" % method
-            # ソース側で n-best だけ残す
+            # filtering n-best records by source-side
             if nbest > 0:
                 if srcWord != "NULL":
                     cntSrcTrg.filterNBestBySrc(nbest, srcWord)
-    # ターゲット側で n-best だけ残す
+    # filtering n-best records by target-side
     if nbest > 0:
         cntSrcTrg.filterNBestByTrg(nbest)
     return cntSrcTrg
@@ -270,46 +269,43 @@ def combineWordPairCounts(lexCounts1, lexCounts2, **options):
 
 
 def extractLexRec(srcFile, saveFile, RecordClass = record.MosesRecord):
-  if type(srcFile) == str:
-    srcFile = files.open(srcFile)
-  if type(saveFile) == str:
-    saveFile = files.open(saveFile, 'w')
-  srcCount = defaultdict(lambda: 0)
-  trgCount = defaultdict(lambda: 0)
-  coCount  = defaultdict(lambda: 0)
-  for line in srcFile:
-    rec = record.TravatarRecord(line)
-    srcSymbols = rec.srcSymbols
-    trgSymbols = rec.trgSymbols
-    if len(srcSymbols) == 1 and len(trgSymbols) == 1:
-      src = srcSymbols[0]
-      trg = trgSymbols[0]
-      srcCount[src] += rec.counts.co
-      trgCount[trg] += rec.counts.co
-      coCount[(src,trg)] += rec.counts.co
-  for pair in sorted(coCount.keys()):
-    (src,trg) = pair
-    egfl = coCount[pair] / float(srcCount[src])
-    fgel = coCount[pair] / float(trgCount[trg])
-    buf = "%s %s %s %s\n" % (src, trg, egfl, fgel)
-    saveFile.write(buf)
-  saveFile.close()
-
-
-
+    if type(srcFile) == str:
+        srcFile = files.open(srcFile)
+    if type(saveFile) == str:
+        saveFile = files.open(saveFile, 'w')
+    srcCount = defaultdict(lambda: 0)
+    trgCount = defaultdict(lambda: 0)
+    coCount  = defaultdict(lambda: 0)
+    for line in srcFile:
+        rec = record.TravatarRecord(line)
+        srcSymbols = rec.srcSymbols
+        trgSymbols = rec.trgSymbols
+        if len(srcSymbols) == 1 and len(trgSymbols) == 1:
+            src = srcSymbols[0]
+            trg = trgSymbols[0]
+            srcCount[src] += rec.counts.co
+            trgCount[trg] += rec.counts.co
+            coCount[(src,trg)] += rec.counts.co
+    for pair in sorted(coCount.keys()):
+        (src,trg) = pair
+        egfl = coCount[pair] / float(srcCount[src])
+        fgel = coCount[pair] / float(trgCount[trg])
+        buf = "%s %s %s %s\n" % (src, trg, egfl, fgel)
+        saveFile.write(buf)
+    saveFile.close()
 
 
 def loadWordProbs(srcFile, reverse = False):
-  if type(srcFile) == str:
-    srcFile = files.open(srcFile)
-  probs = {}
-  for line in srcFile:
-    fields = line.strip().split()
-    src = fields[0]
-    trg = fields[1]
-    if not reverse:
-      probs[(src, trg)] = float(fields[2])
-    else:
-      probs[(trg, src)] = float(fields[3])
-  return probs
+    if type(srcFile) == str:
+        srcFile = files.open(srcFile)
+    probs = {}
+    for line in srcFile:
+        fields = line.strip().split()
+        src = fields[0]
+        trg = fields[1]
+        if not reverse:
+            probs[(src, trg)] = float(fields[2])
+        else:
+            probs[(trg, src)] = float(fields[3])
+    return probs
 

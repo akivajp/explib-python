@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''数値周りの処理'''
+'''functions for numbers'''
 
 def toNumber(anyNum, margin = 0):
     numFloat = float(anyNum)

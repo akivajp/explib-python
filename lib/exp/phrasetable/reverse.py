@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''フレーズテーブルを反転させる'''
+'''function reversing phrase table'''
 
 import codecs
 import gc
@@ -20,14 +20,14 @@ if subprocess.call('which pv > /dev/null', shell = True) == 0:
 
 def reverseTable(srcFile, saveFile, RecordClass = record.MosesRecord):
     if type(srcFile) == str:
-      srcFile = files.open(srcFile)
+        srcFile = files.open(srcFile)
     if type(saveFile) == str:
-      if files.getExt(saveFile) == '.gz':
-        saveFile = open(saveFile, 'w')
-        pipeGzip = subprocess.Popen(['gzip'], stdin=subprocess.PIPE, stdout=saveFile)
-        saveFile = pipeGzip.stdin
-      else:
-        saveFile = open(saveFile, 'w')
+        if files.getExt(saveFile) == '.gz':
+            saveFile = open(saveFile, 'w')
+            pipeGzip = subprocess.Popen(['gzip'], stdin=subprocess.PIPE, stdout=saveFile)
+            saveFile = pipeGzip.stdin
+        else:
+            saveFile = open(saveFile, 'w')
     gc.collect()
     env = os.environ.copy()
     env['LC_ALL'] = 'C'
@@ -39,8 +39,8 @@ def reverseTable(srcFile, saveFile, RecordClass = record.MosesRecord):
     #inputSort = codecs.getwriter('utf-8')(pipeSort.stdin)
     inputSort = pipeSort.stdin
     for line in srcFile:
-      rec = RecordClass(line)
-      inputSort.write( rec.getReversed().toStr() )
+        rec = RecordClass(line)
+        inputSort.write( rec.getReversed().toStr() )
     pipeSort.stdin.close()
     pipeSort.communicate()
     saveFile.close()

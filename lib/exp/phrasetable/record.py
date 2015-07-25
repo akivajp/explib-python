@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''フレーズテーブルのレコードを扱うクラス'''
+'''classes handling phrase table records'''
 
 from exp.common import cache
 from exp.common import debug
@@ -9,86 +9,86 @@ from exp.common import files
 from exp.common import number
 
 class CoOccurrence(object):
-  def __init__(self, src = 0, trg = 0, co = 0):
-    self.src = src
-    self.trg = trg
-    self.co  = co
+    def __init__(self, src = 0, trg = 0, co = 0):
+        self.src = src
+        self.trg = trg
+        self.co  = co
 
-  '''P(e|f)を計算する。（src → trg）'''
-  def calcEGFP(self):
-    return co / float(src)
-  egfp = property(calcEGFP)
+    # calculate P(e|f) (src -> trg)
+    def calcEGFP(self):
+        return co / float(src)
+    egfp = property(calcEGFP)
 
-  '''P(f|e)を計算する。（trg → src）'''
-  def calcFGEP(self):
-    return co / float(trg)
-  fgep = property(calcFGEP)
+    # calculate P(f|e) (trg -> src)
+    def calcFGEP(self):
+        return co / float(trg)
+    fgep = property(calcFGEP)
 
-  def getReversed(self):
-    return CoOccurrence(self.trg, self.src, self.co)
+    def getReversed(self):
+        return CoOccurrence(self.trg, self.src, self.co)
 
-  def setCounts(self, src = None, trg = None, co = None):
-    if src:
-      self.src = src
-    if trg:
-      self.trg = trg
-    if co:
-      self.co = co
+    def setCounts(self, src = None, trg = None, co = None):
+        if src:
+            self.src = src
+        if trg:
+            self.trg = trg
+        if co:
+            self.co = co
 
-  '''等価な整数にキャスト可能ならする'''
-  def simplify(self, margin = 0):
-#    self.src = getNumber(self.src, margin)
-    self.src = number.toNumber(self.src, margin)
-#    self.trg = getNumber(self.trg, margin)
-    self.trg = number.toNumber(self.trg, margin)
-#    self.co  = getNumber(self.co,  margin)
-    self.co  = number.toNumber(self.co,  margin)
+    def simplify(self, margin = 0):
+        '''cast to equivalent integer value if possible'''
+#        self.src = getNumber(self.src, margin)
+        self.src = number.toNumber(self.src, margin)
+#        self.trg = getNumber(self.trg, margin)
+        self.trg = number.toNumber(self.trg, margin)
+#        self.co  = getNumber(self.co,  margin)
+        self.co  = number.toNumber(self.co,  margin)
 
-  def __str__(self):
-      name = self.__class__.__name__
-      mod  = self.__class__.__module__
-      return "%s.%s(src = %s, trg = %s, co = %s)" % (mod, name, src, trg, co)
+    def __str__(self):
+        name = self.__class__.__name__
+        mod  = self.__class__.__module__
+        return "%s.%s(src = %s, trg = %s, co = %s)" % (mod, name, src, trg, co)
 
 class Record(object):
-  def __init__(self):
-    self.src = ""
-    self.trg = ""
-    self.features = {}
-    self.counts = CoOccurrence()
-#    self.aligns = []
-    self.aligns = set()
+    def __init__(self):
+      self.src = ""
+      self.trg = ""
+      self.features = {}
+      self.counts = CoOccurrence()
+#      self.aligns = []
+      self.aligns = set()
 
-  def getAlignMap(self):
-    return getAlignMap(self.aligns, reverse = False)
-  alignMap = property(getAlignMap)
+    def getAlignMap(self):
+        return getAlignMap(self.aligns, reverse = False)
+    alignMap = property(getAlignMap)
 
-  def getAlignMapRev(self):
-    return getAlignMap(self.aligns, reverse = True)
-  alignMapRev = property(getAlignMapRev)
+    def getAlignMapRev(self):
+        return getAlignMap(self.aligns, reverse = True)
+    alignMapRev = property(getAlignMapRev)
 
-  def getReversed(self):
-    recRev = self.__class__()
-    recRev.src = self.trg
-    recRev.trg = self.src
-    recRev.counts = self.counts.getReversed()
-#    debug.log(self.toStr())
-#    debug.log(self.aligns)
-#    recRev.aligns = getRevAligns(self.aligns)
-    recRev.aligns = getRevAlignSet(self.aligns)
-    revFeatures = {}
-    if 'egfp' in self.features:
-      revFeatures[intern('fgep')] = self.features['egfp']
-    if 'egfl' in self.features:
-      revFeatures[intern('fgel')] = self.features['egfl']
-    if 'fgep' in self.features:
-      revFeatures[intern('egfp')] = self.features['fgep']
-    if 'fgel' in self.features:
-      revFeatures[intern('egfl')] = self.features['fgel']
-    if 'p' in self.features:
-      revFeatures[intern('p')] = self.features['p']
-    revFeatures[intern('w')] = len(self.srcTerms)
-    recRev.features = revFeatures
-    return recRev
+    def getReversed(self):
+        recRev = self.__class__()
+        recRev.src = self.trg
+        recRev.trg = self.src
+        recRev.counts = self.counts.getReversed()
+#        debug.log(self.toStr())
+#        debug.log(self.aligns)
+#        recRev.aligns = getRevAligns(self.aligns)
+        recRev.aligns = getRevAlignSet(self.aligns)
+        revFeatures = {}
+        if 'egfp' in self.features:
+            revFeatures[intern('fgep')] = self.features['egfp']
+        if 'egfl' in self.features:
+            revFeatures[intern('fgel')] = self.features['egfl']
+        if 'fgep' in self.features:
+            revFeatures[intern('egfp')] = self.features['fgep']
+        if 'fgel' in self.features:
+            revFeatures[intern('egfl')] = self.features['fgel']
+        if 'p' in self.features:
+            revFeatures[intern('p')] = self.features['p']
+        revFeatures[intern('w')] = len(self.srcTerms)
+        recRev.features = revFeatures
+        return recRev
 
 
 class MosesRecord(Record):
@@ -136,49 +136,49 @@ class MosesRecord(Record):
 
 
 class RecordReader(object):
-  def __init__(self, tablePath, **options):
-    self.RecordClass = options.get('RecordClass', MosesRecord)
-    self.tableFile = files.open(tablePath, 'r')
-    self.records = []
+    def __init__(self, tablePath, **options):
+        self.RecordClass = options.get('RecordClass', MosesRecord)
+        self.tableFile = files.open(tablePath, 'r')
+        self.records = []
 
-  def getRecords(self):
-    line = self.tableFile.readline()
-    if line == "":
-      records = self.records
-      self.records = []
-      return records
-    while line:
-      rec = self.RecordClass(line)
-      if len(self.records) == 0:
-        self.records.append(rec)
-      elif rec.src == self.records[0].src:
-        self.records.append(rec)
-      else:
+    def getRecords(self):
+        line = self.tableFile.readline()
+        if line == "":
+            records = self.records
+            self.records = []
+            return records
+        while line:
+            rec = self.RecordClass(line)
+            if len(self.records) == 0:
+                self.records.append(rec)
+            elif rec.src == self.records[0].src:
+                self.records.append(rec)
+            else:
+                records = self.records
+                self.records = [rec]
+                return records
+            line = self.tableFile.readline()
         records = self.records
-        self.records = [rec]
+        self.records = []
         return records
-      line = self.tableFile.readline()
-    records = self.records
-    self.records = []
-    return records
 
 
 def getAlignMap(aligns, reverse = False):
-  alignMap = {}
-  for align in aligns:
-    (s, t) = map(int, align.split('-'))
-    if reverse:
-      alignMap.setdefault(t, []).append(s)
-    else:
-      alignMap.setdefault(s, []).append(t)
-  return alignMap
+    alignMap = {}
+    for align in aligns:
+        (s, t) = map(int, align.split('-'))
+        if reverse:
+            alignMap.setdefault(t, []).append(s)
+        else:
+            alignMap.setdefault(s, []).append(t)
+    return alignMap
 
 def getAlignSet(strField):
     return set(strField.strip().split())
 
 def getCounts(field):
-#  return map(getNumber, field.split())
-  return map(number.toNumber, field.split())
+#    return map(getNumber, field.split())
+    return map(number.toNumber, field.split())
 
 def getNumber(anyNum, margin = 0):
     numFloat = float(anyNum)
@@ -195,15 +195,15 @@ def getNumber(anyNum, margin = 0):
 
 #def getRevAligns(aligns):
 def getRevAlignSet(aligns):
-#  revAlignList = []
-  revAlignSet = set()
-#  debug.log(aligns)
-  for a in aligns:
-    (s, t) = map(int, a.split('-'))
-#    revAlignList.append( "%d-%d" % (t, s) )
-    revAlignSet.add( "%d-%d" % (t, s) )
-#  return sorted(revAlignList)
-  return sorted(revAlignSet)
+#    revAlignList = []
+    revAlignSet = set()
+#    debug.log(aligns)
+    for a in aligns:
+      (s, t) = map(int, a.split('-'))
+#      revAlignList.append( "%d-%d" % (t, s) )
+      revAlignSet.add( "%d-%d" % (t, s) )
+#    return sorted(revAlignList)
+    return sorted(revAlignSet)
 
 
 def getMosesFeatures(field):
@@ -216,11 +216,11 @@ def getMosesFeatures(field):
     return features
 
 def getStrMosesFeatures(dicFeatures):
-  '''素性辞書を、スペース区切りのスコア文字列に戻す'''
-  scores = []
-  scores.append( dicFeatures.get('fgep', 0) )
-  scores.append( dicFeatures.get('fgel', 0) )
-  scores.append( dicFeatures.get('egfp', 0) )
-  scores.append( dicFeatures.get('egfl', 0) )
-  return str.join(' ', map(str,scores))
+    '''convert back the feature dictionary to score string separated by space'''
+    scores = []
+    scores.append( dicFeatures.get('fgep', 0) )
+    scores.append( dicFeatures.get('fgel', 0) )
+    scores.append( dicFeatures.get('egfp', 0) )
+    scores.append( dicFeatures.get('egfl', 0) )
+    return str.join(' ', map(str,scores))
 

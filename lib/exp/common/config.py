@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''設定ファイルの操作'''
+'''classes controlling config files'''
 
 from collections import OrderedDict
 
@@ -20,10 +20,10 @@ class Config(OrderedDict):
             line = line.strip()
             m = re.match('\s*\[(.*)\]', line)
             if m:
-                # フィールド名の設定
+                # setting for field name
                 field = m.groups()[0]
             else:
-                # パラメーター
+                # parameter
                 params = self.setdefault(field, [])
                 params.append(line)
 
@@ -32,10 +32,10 @@ class Config(OrderedDict):
         lastIndex = -1
         for i, p in enumerate(params):
             if p == '':
-                # 空行
+                # blank line
                 pass
             elif re.match('\s*#', p):
-                # コメント
+                # comment
                 pass
             else:
                 lastIndex = i

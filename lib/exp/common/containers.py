@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''便利なコンテナクラス'''
+'''auxiliary container classes'''
 
 from collections import Iterable
 

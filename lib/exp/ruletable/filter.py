@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''ルールテーブルのフィルタリングを行う'''
+'''rule table filtering function'''
 
 import argparse
 import sys
@@ -37,5 +37,5 @@ example:
     filterTravatarTable(**args)
 
 if __name__ == '__main__':
-  main()
+    main()
 

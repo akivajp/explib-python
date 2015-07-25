@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''フレーズテーブルを扱うクラス'''
+'''classes handling phrase table'''
 
 import sys
 import time
